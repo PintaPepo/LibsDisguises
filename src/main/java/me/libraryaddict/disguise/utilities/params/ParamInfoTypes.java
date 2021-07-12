@@ -5,6 +5,7 @@ import com.comphenix.protocol.wrappers.WrappedGameProfile;
 import com.comphenix.protocol.wrappers.WrappedParticle;
 import me.libraryaddict.disguise.DisguiseConfig;
 import me.libraryaddict.disguise.disguisetypes.EntityPose;
+import me.libraryaddict.disguise.disguisetypes.GolemCrack;
 import me.libraryaddict.disguise.disguisetypes.RabbitType;
 import me.libraryaddict.disguise.utilities.params.types.ParamInfoEnum;
 import me.libraryaddict.disguise.utilities.params.types.base.*;
@@ -13,6 +14,7 @@ import me.libraryaddict.disguise.utilities.reflection.NmsVersion;
 import org.apache.commons.lang.StringUtils;
 import org.bukkit.*;
 import org.bukkit.block.BlockFace;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.boss.BarColor;
 import org.bukkit.boss.BarStyle;
 import org.bukkit.entity.*;
@@ -31,6 +33,10 @@ public class ParamInfoTypes {
     public ParamInfoItemBlock getParamInfoBlock() {
         return new ParamInfoItemBlock(ItemStack.class, "ItemStack", "ItemStack (Material,Amount?,Glow?)",
                 "An ItemStack compromised of Material,Amount,Glow. Only requires Material", getMaterials());
+    }
+
+    public ParamInfoSoundGroup getParamInfoSoundGroup() {
+        return new ParamInfoSoundGroup();
     }
 
     /**
@@ -73,6 +79,8 @@ public class ParamInfoTypes {
             paramInfos.add(new ParamInfoParticle(WrappedParticle.class, "Particle",
                     "The different particles of Minecraft", Particle.values(), getMaterials()));
             paramInfos.add(new ParamInfoEnum(TropicalFish.Pattern.class, "Pattern", "Patterns of a tropical fish"));
+            paramInfos.add(new ParamInfoBlockData(BlockData.class, "BlockData",
+                    "The block data states, barrel[facing=north,open=false] as example", getMaterials()));
         } else {
             paramInfos.add(new ParamInfoEnum(Particle.class, "Particle", "The different particles of Minecraft"));
         }
@@ -88,6 +96,8 @@ public class ParamInfoTypes {
             paramInfos.add(new ParamInfoEnum(Panda.Gene.class, "Panda Gene", "The panda gene type"));
             paramInfos.add(new ParamInfoEnum(MushroomCow.Variant.class, "Mushroom Cow Variant",
                     "The different variants for mushroom cows"));
+        } else {
+            paramInfos.add(new ParamInfoEnum(Ocelot.Type.class, "Ocelot Type", "The type of ocelot"));
         }
 
         paramInfos.add(new ParamInfoEnum(DisguiseConfig.NotifyBar.class, "NotifyBar",
@@ -119,6 +129,9 @@ public class ParamInfoTypes {
                 "Set how long the disguise lasts, <Num><Time><Num>... where <Time> is (s/sec)(m/min)(h/hour)(d/day) " +
                         "etc. 30m20secs = 30 minutes, 20 seconds"));
 
+        paramInfos.add(new ParamInfoEnum(ChatColor.class, "ChatColor", "A chat color"));
+        paramInfos.add(new ParamInfoEnum(GolemCrack.class, "Golem Cracked", "The stage a golem has been cracked"));
+
         // Register base types
         Map<String, Object> booleanMap = new HashMap<>();
         booleanMap.put("true", true);
@@ -128,7 +141,9 @@ public class ParamInfoTypes {
         paramInfos.add(new ParamInfoString(String.class, "Text", "A line of text"));
         paramInfos.add(new ParamInfoInteger("Number", "A whole number without decimals"));
         paramInfos.add(new ParamInfoFloat("Number.0", "A number which can have decimal places"));
+        paramInfos.add(new ParamInfoFloatNullable("Number.0", "A number which can have decimal places or be null"));
         paramInfos.add(new ParamInfoDouble("Number.0", "A number which can have decimal places"));
+        paramInfos.add(new ParamInfoSoundGroup());
 
         return paramInfos;
     }
@@ -147,8 +162,7 @@ public class ParamInfoTypes {
             }
 
             return map;
-        }
-        catch (ClassNotFoundException | IllegalAccessException e) {
+        } catch (ClassNotFoundException | IllegalAccessException e) {
             e.printStackTrace();
         }
 
@@ -172,9 +186,7 @@ public class ParamInfoTypes {
                 }
 
                 list.add(material);
-            }
-            catch (NoSuchFieldException e) {
-                e.printStackTrace();
+            } catch (NoSuchFieldException ignored) {
             }
         }
 
@@ -185,8 +197,9 @@ public class ParamInfoTypes {
         Map<String, Object> map = new HashMap<>();
 
         for (PotionEffectType effectType : PotionEffectType.values()) {
-            if (effectType == null)
+            if (effectType == null) {
                 continue;
+            }
 
             map.put(toReadable(effectType.getName()), effectType);
         }
@@ -198,7 +211,7 @@ public class ParamInfoTypes {
         String[] split = string.split("_");
 
         for (int i = 0; i < split.length; i++) {
-            split[i] = split[i].substring(0, 1) + split[i].substring(1).toLowerCase();
+            split[i] = split[i].substring(0, 1) + split[i].substring(1).toLowerCase(Locale.ENGLISH);
         }
 
         return StringUtils.join(split, "_");

@@ -11,13 +11,11 @@ import me.libraryaddict.disguise.utilities.parser.DisguiseParser;
 import me.libraryaddict.disguise.utilities.parser.DisguisePermissions;
 import me.libraryaddict.disguise.utilities.translations.LibsMsg;
 import org.apache.commons.lang.StringUtils;
-import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 
-import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -29,12 +27,12 @@ public class DisguiseEntityCommand extends DisguiseBaseCommand implements TabCom
         }
 
         if (!(sender instanceof Player)) {
-            sender.sendMessage(LibsMsg.NO_CONSOLE.get());
+            LibsMsg.NO_CONSOLE.send(sender);
             return true;
         }
 
         if (!getPermissions(sender).hasPermissions()) {
-            sender.sendMessage(LibsMsg.NO_PERM.get());
+            LibsMsg.NO_PERM.send(sender);
             return true;
         }
 
@@ -43,31 +41,30 @@ public class DisguiseEntityCommand extends DisguiseBaseCommand implements TabCom
             return true;
         }
 
+        if (hasHitRateLimit(sender)) {
+            return true;
+        }
+
         String[] disguiseArgs = DisguiseUtilities.split(StringUtils.join(args, " "));
         Disguise testDisguise;
 
         try {
-            testDisguise = DisguiseParser
-                    .parseTestDisguise(sender, getPermNode(), disguiseArgs, getPermissions(sender));
-        }
-        catch (DisguiseParseException ex) {
+            testDisguise = DisguiseParser.parseTestDisguise(sender, getPermNode(), disguiseArgs, getPermissions(sender));
+        } catch (DisguiseParseException ex) {
             if (ex.getMessage() != null) {
-                sender.sendMessage(ex.getMessage());
+                DisguiseUtilities.sendMessage(sender, ex.getMessage());
             }
 
             return true;
-        }
-        catch (IllegalAccessException | InvocationTargetException ex) {
+        } catch (Throwable ex) {
             ex.printStackTrace();
             return true;
         }
 
         LibsDisguises.getInstance().getListener()
-                .addInteraction(sender.getName(), new DisguiseEntityInteraction(disguiseArgs),
-                        DisguiseConfig.getDisguiseEntityExpire());
+                .addInteraction(sender.getName(), new DisguiseEntityInteraction(disguiseArgs), DisguiseConfig.getDisguiseEntityExpire());
 
-        sender.sendMessage(LibsMsg.DISG_ENT_CLICK
-                .get(DisguiseConfig.getDisguiseEntityExpire(), testDisguise.getType().toReadable()));
+        LibsMsg.DISG_ENT_CLICK.send(sender, DisguiseConfig.getDisguiseEntityExpire(), testDisguise.getDisguiseName());
         return true;
     }
 
@@ -93,18 +90,22 @@ public class DisguiseEntityCommand extends DisguiseBaseCommand implements TabCom
     protected void sendCommandUsage(CommandSender sender, DisguisePermissions permissions) {
         ArrayList<String> allowedDisguises = getAllowedDisguises(permissions);
 
-        sender.sendMessage(LibsMsg.DISG_ENT_HELP1.get());
-        sender.sendMessage(LibsMsg.CAN_USE_DISGS
-                .get(ChatColor.GREEN + StringUtils.join(allowedDisguises, ChatColor.RED + ", " + ChatColor.GREEN)));
-
-        if (allowedDisguises.contains("player")) {
-            sender.sendMessage(LibsMsg.DISG_ENT_HELP3.get());
+        if (allowedDisguises.isEmpty()) {
+            LibsMsg.NO_PERM.send(sender);
+            return;
         }
 
-        sender.sendMessage(LibsMsg.DISG_ENT_HELP4.get());
+        LibsMsg.DISG_ENT_HELP1.send(sender);
+        LibsMsg.CAN_USE_DISGS.send(sender, StringUtils.join(allowedDisguises, LibsMsg.CAN_USE_DISGS_SEPERATOR.get()));
+
+        if (allowedDisguises.contains("player")) {
+            LibsMsg.DISG_ENT_HELP3.send(sender);
+        }
+
+        LibsMsg.DISG_ENT_HELP4.send(sender);
 
         if (allowedDisguises.contains("dropped_item") || allowedDisguises.contains("falling_block")) {
-            sender.sendMessage(LibsMsg.DISG_ENT_HELP5.get());
+            LibsMsg.DISG_ENT_HELP5.send(sender);
         }
     }
 }

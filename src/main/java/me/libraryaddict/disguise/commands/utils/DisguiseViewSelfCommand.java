@@ -15,7 +15,7 @@ public class DisguiseViewSelfCommand implements CommandExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (sender.getName().equals("CONSOLE")) {
-            sender.sendMessage(LibsMsg.NO_CONSOLE.get());
+            LibsMsg.NO_CONSOLE.send(sender);
             return true;
         }
 
@@ -23,10 +23,10 @@ public class DisguiseViewSelfCommand implements CommandExecutor {
 
         if (DisguiseAPI.isViewSelfToggled(player)) {
             DisguiseAPI.setViewDisguiseToggled(player, false);
-            sender.sendMessage(LibsMsg.VIEW_SELF_OFF.get());
+            LibsMsg.VIEW_SELF_OFF.send(sender);
         } else {
             DisguiseAPI.setViewDisguiseToggled(player, true);
-            sender.sendMessage(LibsMsg.VIEW_SELF_ON.get());
+            LibsMsg.VIEW_SELF_ON.send(sender);
         }
 
         return true;

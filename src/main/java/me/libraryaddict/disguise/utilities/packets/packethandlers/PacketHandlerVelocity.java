@@ -22,10 +22,15 @@ public class PacketHandlerVelocity implements IPacketHandler {
     public void handle(Disguise disguise, PacketContainer sentPacket, LibsPackets packets, Player observer,
             Entity entity) {
         // If the disguise isnt a misc or the disguised is the same type
-        if (!disguise.getType().isMisc() || DisguiseType.getType(entity) == disguise.getType()) {
+        if ((!disguise.getType().isMisc() && disguise.getType() != DisguiseType.SQUID) ||
+                DisguiseType.getType(entity) == disguise.getType()) {
             return;
         }
 
         packets.clear();
+
+        PacketContainer packet = new PacketContainer(PacketType.Play.Server.ENTITY_VELOCITY);
+        packet.getIntegers().write(0, entity.getEntityId());
+        packets.addPacket(packet);
     }
 }

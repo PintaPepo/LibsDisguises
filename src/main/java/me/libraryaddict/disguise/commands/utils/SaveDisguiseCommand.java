@@ -30,12 +30,14 @@ public class SaveDisguiseCommand implements CommandExecutor {
     public boolean onCommand(CommandSender sender, Command command, String s, String[] strings) {
         if (sender instanceof Player && !sender.isOp() &&
                 (!LibsPremium.isPremium() || LibsPremium.getPaidInformation() == LibsPremium.getPluginInformation())) {
-            sender.sendMessage(ChatColor.RED + "Please purchase Lib's Disguises to enable player commands");
+            sender.sendMessage(ChatColor.RED +
+                    "This is the free version of Lib's Disguises, player commands are limited to console and Operators only! Purchase the plugin for " +
+                    "non-admin usage!");
             return true;
         }
 
         if (!sender.hasPermission("libsdisguises.savedisguise")) {
-            sender.sendMessage(LibsMsg.NO_PERM.get());
+            LibsMsg.NO_PERM.send(sender);
             return true;
         }
 
@@ -51,14 +53,14 @@ public class SaveDisguiseCommand implements CommandExecutor {
 
         if (args.length == 0) {
             if (!(sender instanceof Player)) {
-                sender.sendMessage(LibsMsg.NO_CONSOLE.get());
+                LibsMsg.NO_CONSOLE.send(sender);
                 return true;
             }
 
             Disguise disguise = DisguiseAPI.getDisguise((Entity) sender);
 
             if (disguise == null) {
-                sender.sendMessage(LibsMsg.NOT_DISGUISED.get());
+                LibsMsg.NOT_DISGUISED.send(sender);
                 return true;
             }
 
@@ -67,13 +69,12 @@ public class SaveDisguiseCommand implements CommandExecutor {
             try {
                 DisguiseAPI.addCustomDisguise(name, disguiseString);
 
-                sender.sendMessage(LibsMsg.CUSTOM_DISGUISE_SAVED.get(name));
-            }
-            catch (DisguiseParseException e) {
+                LibsMsg.CUSTOM_DISGUISE_SAVED.send(sender, name);
+            } catch (DisguiseParseException e) {
                 if (e.getMessage() != null) {
-                    sender.sendMessage(e.getMessage());
+                    DisguiseUtilities.sendMessage(sender, e.getMessage());
                 } else {
-                    sender.sendMessage(LibsMsg.PARSE_CANT_LOAD.get());
+                    LibsMsg.PARSE_CANT_LOAD.send(sender);
                 }
             }
 
@@ -85,8 +86,9 @@ public class SaveDisguiseCommand implements CommandExecutor {
             int i = 2;
 
             for (; i < args.length; i++) {
-                if (!args[i].equalsIgnoreCase("setskin"))
+                if (!args[i].equalsIgnoreCase("setskin")) {
                     continue;
+                }
 
                 break;
             }
@@ -109,7 +111,7 @@ public class SaveDisguiseCommand implements CommandExecutor {
                 String usable = SkinUtils.getUsableStatus();
 
                 if (usable != null) {
-                    sender.sendMessage(usable);
+                    DisguiseUtilities.sendMessage(sender, usable);
                     return true;
                 }
 
@@ -119,7 +121,7 @@ public class SaveDisguiseCommand implements CommandExecutor {
                     private BukkitTask runnable = new BukkitRunnable() {
                         @Override
                         public void run() {
-                            sender.sendMessage(LibsMsg.PLEASE_WAIT.get());
+                            LibsMsg.PLEASE_WAIT.send(sender);
                         }
                     }.runTaskTimer(LibsDisguises.getInstance(), 100, 100);
 
@@ -127,17 +129,18 @@ public class SaveDisguiseCommand implements CommandExecutor {
                     public void onError(LibsMsg msg, Object... args) {
                         runnable.cancel();
 
-                        sender.sendMessage(msg.get(args));
+                        msg.send(sender, args);
                     }
 
                     @Override
                     public void onInfo(LibsMsg msg, Object... args) {
-                        sender.sendMessage(msg.get(args));
+                        msg.send(sender, args);
                     }
 
                     @Override
                     public void onSuccess(WrappedGameProfile profile) {
                         runnable.cancel();
+                        DisguiseUtilities.doSkinUUIDWarning(sender);
 
                         finalArgs[skinId] = DisguiseUtilities.getGson().toJson(profile);
 
@@ -163,25 +166,24 @@ public class SaveDisguiseCommand implements CommandExecutor {
 
         try {
             DisguiseAPI.addCustomDisguise(name, disguiseString);
-            sender.sendMessage(LibsMsg.CUSTOM_DISGUISE_SAVED.get(name));
+            LibsMsg.CUSTOM_DISGUISE_SAVED.send(sender, name);
 
             DisguiseUtilities.setSaveDisguiseCommandUsed();
-        }
-        catch (DisguiseParseException e) {
+        } catch (DisguiseParseException e) {
             if (e.getMessage() != null) {
-                sender.sendMessage(e.getMessage());
+                DisguiseUtilities.sendMessage(sender, e.getMessage());
             } else {
-                sender.sendMessage(LibsMsg.PARSE_CANT_LOAD.get());
+                LibsMsg.PARSE_CANT_LOAD.send(sender);
             }
         }
     }
 
     private void sendHelp(CommandSender sender) {
-        sender.sendMessage(LibsMsg.SAVE_DISG_HELP_1.get());
-        sender.sendMessage(LibsMsg.SAVE_DISG_HELP_2.get());
-        sender.sendMessage(LibsMsg.SAVE_DISG_HELP_3.get());
-        sender.sendMessage(LibsMsg.SAVE_DISG_HELP_4.get());
-        sender.sendMessage(LibsMsg.SAVE_DISG_HELP_5.get());
-        sender.sendMessage(LibsMsg.SAVE_DISG_HELP_6.get());
+        LibsMsg.SAVE_DISG_HELP_1.send(sender);
+        LibsMsg.SAVE_DISG_HELP_2.send(sender);
+        LibsMsg.SAVE_DISG_HELP_3.send(sender);
+        LibsMsg.SAVE_DISG_HELP_4.send(sender);
+        LibsMsg.SAVE_DISG_HELP_5.send(sender);
+        LibsMsg.SAVE_DISG_HELP_6.send(sender);
     }
 }

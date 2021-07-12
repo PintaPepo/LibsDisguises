@@ -22,17 +22,17 @@ public class UndisguiseEntityInteraction implements LibsEntityInteract {
         }
 
         if (DisguiseAPI.isDisguised(entity)) {
-            DisguiseAPI.undisguiseToAll(entity);
+            DisguiseAPI.undisguiseToAll(p, entity);
 
             if (entity instanceof Player)
-                p.sendMessage(LibsMsg.LISTEN_UNDISG_PLAYER.get(entityName));
+                LibsMsg.LISTEN_UNDISG_PLAYER.send(p, entityName);
             else
-                p.sendMessage(LibsMsg.LISTEN_UNDISG_ENT.get(entityName));
+                LibsMsg.LISTEN_UNDISG_ENT.send(p, entityName);
         } else {
             if (entity instanceof Player)
-                p.sendMessage(LibsMsg.LISTEN_UNDISG_PLAYER_FAIL.get(entityName));
+                LibsMsg.LISTEN_UNDISG_PLAYER_FAIL.send(p, entityName);
             else
-                p.sendMessage(LibsMsg.LISTEN_UNDISG_ENT_FAIL.get(entityName));
+                LibsMsg.LISTEN_UNDISG_ENT_FAIL.send(p, entityName);
         }
     }
 }

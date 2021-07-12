@@ -26,14 +26,12 @@ import org.bukkit.entity.Player;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 
 public class DisguiseRadiusCommand extends DisguiseBaseCommand implements TabCompleter {
-    private int maxRadius = 30;
     private ArrayList<Class<? extends Entity>> validClasses = new ArrayList<>();
 
-    public DisguiseRadiusCommand(int maxRadius) {
-        this.maxRadius = maxRadius;
-
+    public DisguiseRadiusCommand() {
         for (EntityType type : EntityType.values()) {
             Class c = type.getEntityClass();
 
@@ -52,14 +50,14 @@ public class DisguiseRadiusCommand extends DisguiseBaseCommand implements TabCom
         }
 
         if (sender.getName().equals("CONSOLE")) {
-            sender.sendMessage(LibsMsg.NO_CONSOLE.get());
+            LibsMsg.NO_CONSOLE.send(sender);
             return true;
         }
 
         DisguisePermissions permissions = getPermissions(sender);
 
         if (!permissions.hasPermissions()) {
-            sender.sendMessage(LibsMsg.NO_PERM.get());
+            LibsMsg.NO_PERM.send(sender);
             return true;
         }
 
@@ -68,8 +66,11 @@ public class DisguiseRadiusCommand extends DisguiseBaseCommand implements TabCom
             return true;
         }
 
-        if (args[0].equalsIgnoreCase(TranslateType.DISGUISES.get("EntityType")) ||
-                args[0].equalsIgnoreCase(TranslateType.DISGUISES.get("EntityType") + "s")) {
+        if (hasHitRateLimit(sender)) {
+            return true;
+        }
+
+        if (args[0].equalsIgnoreCase(TranslateType.DISGUISES.get("EntityType")) || args[0].equalsIgnoreCase(TranslateType.DISGUISES.get("EntityType") + "s")) {
             ArrayList<String> classes = new ArrayList<>();
 
             for (Class c : validClasses) {
@@ -78,8 +79,7 @@ public class DisguiseRadiusCommand extends DisguiseBaseCommand implements TabCom
 
             Collections.sort(classes);
 
-            sender.sendMessage(LibsMsg.DRADIUS_ENTITIES
-                    .get(ChatColor.GREEN + StringUtils.join(classes, ChatColor.DARK_GREEN + ", " + ChatColor.GREEN)));
+            LibsMsg.DRADIUS_ENTITIES.send(sender, ChatColor.GREEN + StringUtils.join(classes, ChatColor.DARK_GREEN + ", " + ChatColor.GREEN));
             return true;
         }
 
@@ -98,37 +98,40 @@ public class DisguiseRadiusCommand extends DisguiseBaseCommand implements TabCom
 
             if (starting == 0) {
                 try {
-                    type = EntityType.valueOf(args[0].toUpperCase());
-                }
-                catch (Exception ignored) {
+                    type = EntityType.valueOf(args[0].toUpperCase(Locale.ENGLISH));
+                } catch (Exception ignored) {
                 }
 
                 if (type == null) {
-                    sender.sendMessage(LibsMsg.DMODRADIUS_UNRECOGNIZED.get(args[0]));
+                    LibsMsg.DMODRADIUS_UNRECOGNIZED.send(sender, args[0]);
                     return true;
                 }
             }
         }
 
         if (args.length == starting + 1) {
-            sender.sendMessage(
-                    (starting == 0 ? LibsMsg.DRADIUS_NEEDOPTIONS : LibsMsg.DRADIUS_NEEDOPTIONS_ENTITY).get());
+            if (starting == 0) {
+                LibsMsg.DRADIUS_NEEDOPTIONS.send(sender);
+            } else {
+                LibsMsg.DRADIUS_NEEDOPTIONS_ENTITY.send(sender);
+            }
+
             return true;
         } else if (args.length < 2) {
-            sender.sendMessage(LibsMsg.DRADIUS_NEEDOPTIONS.get());
+            LibsMsg.DRADIUS_NEEDOPTIONS.send(sender);
             return true;
         }
 
         if (!isInteger(args[starting])) {
-            sender.sendMessage(LibsMsg.NOT_NUMBER.get(args[starting]));
+            LibsMsg.NOT_NUMBER.send(sender, args[starting]);
             return true;
         }
 
         int radius = Integer.parseInt(args[starting]);
 
-        if (radius > maxRadius) {
-            sender.sendMessage(LibsMsg.LIMITED_RADIUS.get(maxRadius));
-            radius = maxRadius;
+        if (radius > DisguiseConfig.getDisguiseRadiusMax()) {
+            LibsMsg.LIMITED_RADIUS.send(sender, DisguiseConfig.getDisguiseRadiusMax());
+            radius = DisguiseConfig.getDisguiseRadiusMax();
         }
 
         String[] newArgs = new String[args.length - (starting + 1)];
@@ -166,17 +169,14 @@ public class DisguiseRadiusCommand extends DisguiseBaseCommand implements TabCom
                     continue;
                 }
 
-                if (testDisguise.isMiscDisguise() && !DisguiseConfig.isMiscDisguisesForLivingEnabled() &&
-                        entity instanceof LivingEntity) {
+                if (testDisguise.isMiscDisguise() && !DisguiseConfig.isMiscDisguisesForLivingEnabled() && entity instanceof LivingEntity) {
                     miscDisguises++;
                     continue;
                 }
 
-                Disguise disguise = DisguiseParser
-                        .parseDisguise(sender, entity, getPermNode(), disguiseArgs, permissions);
+                Disguise disguise = DisguiseParser.parseDisguise(sender, entity, getPermNode(), disguiseArgs, permissions);
 
-                if (entity instanceof Player && DisguiseConfig.isNameOfPlayerShownAboveDisguise() &&
-                        !entity.hasPermission("libsdisguises.hidename")) {
+                if (entity instanceof Player && DisguiseConfig.isNameOfPlayerShownAboveDisguise() && !entity.hasPermission("libsdisguises.hidename")) {
                     if (disguise.getWatcher() instanceof LivingWatcher) {
                         disguise.getWatcher().setCustomName(getDisplayName(entity));
                         if (DisguiseConfig.isNameAboveHeadAlwaysVisible()) {
@@ -189,12 +189,16 @@ public class DisguiseRadiusCommand extends DisguiseBaseCommand implements TabCom
 
                 if (!setViewDisguise(args)) {
                     // They prefer to have the opposite of whatever the view disguises option is
-                    if (DisguiseAPI.hasSelfDisguisePreference(disguise.getEntity()) &&
-                            disguise.isSelfDisguiseVisible() == DisguiseConfig.isViewDisguises())
+                    if (DisguiseAPI.hasSelfDisguisePreference(disguise.getEntity()) && disguise.isSelfDisguiseVisible() == DisguiseConfig.isViewSelfDisguisesDefault()) {
                         disguise.setViewSelfDisguise(!disguise.isSelfDisguiseVisible());
+                    }
                 }
 
-                disguise.startDisguise();
+                if (!DisguiseAPI.isActionBarShown(disguise.getEntity())) {
+                    disguise.setNotifyBar(DisguiseConfig.NotifyBar.NONE);
+                }
+
+                disguise.startDisguise(sender);
 
                 if (disguise.isDisguiseInUse()) {
                     disguisedEntitys++;
@@ -202,21 +206,19 @@ public class DisguiseRadiusCommand extends DisguiseBaseCommand implements TabCom
             }
 
             if (disguisedEntitys > 0) {
-                sender.sendMessage(LibsMsg.DISRADIUS.get(disguisedEntitys));
+                LibsMsg.DISRADIUS.send(sender, disguisedEntitys);
             } else {
-                sender.sendMessage(LibsMsg.DISRADIUS_FAIL.get());
+                LibsMsg.DISRADIUS_FAIL.send(sender);
             }
 
             if (miscDisguises > 0) {
-                sender.sendMessage(LibsMsg.DRADIUS_MISCDISG.get(miscDisguises));
+                LibsMsg.DRADIUS_MISCDISG.send(sender, miscDisguises);
             }
-        }
-        catch (DisguiseParseException ex) {
+        } catch (DisguiseParseException ex) {
             if (ex.getMessage() != null) {
-                sender.sendMessage(ex.getMessage());
+                DisguiseUtilities.sendMessage(sender, ex.getMessage());
             }
-        }
-        catch (Exception ex) {
+        } catch (Throwable ex) {
             ex.printStackTrace();
         }
 
@@ -225,8 +227,9 @@ public class DisguiseRadiusCommand extends DisguiseBaseCommand implements TabCom
 
     private boolean setViewDisguise(String[] strings) {
         for (String string : strings) {
-            if (!string.equalsIgnoreCase("setSelfDisguiseVisible"))
+            if (!string.equalsIgnoreCase("setSelfDisguiseVisible")) {
                 continue;
+            }
 
             return true;
         }
@@ -253,16 +256,18 @@ public class DisguiseRadiusCommand extends DisguiseBaseCommand implements TabCom
 
         if (!isInteger(args[0])) {
             for (Class c : validClasses) {
-                if (!TranslateType.DISGUISES.get(c.getSimpleName()).equalsIgnoreCase(args[0]))
+                if (!TranslateType.DISGUISES.get(c.getSimpleName()).equalsIgnoreCase(args[0])) {
                     continue;
+                }
 
                 starting = 2;
                 break;
             }
 
             // Not a valid radius
-            if (starting == 1 || args.length == 1 || !isInteger(args[1]))
+            if (starting == 1 || args.length == 1 || !isInteger(args[1])) {
                 return filterTabs(tabs, origArgs);
+            }
         }
 
         tabs.addAll(getTabDisguiseTypes(sender, perms, args, starting, getCurrentArg(origArgs)));
@@ -277,20 +282,24 @@ public class DisguiseRadiusCommand extends DisguiseBaseCommand implements TabCom
     protected void sendCommandUsage(CommandSender sender, DisguisePermissions permissions) {
         ArrayList<String> allowedDisguises = getAllowedDisguises(permissions);
 
-        sender.sendMessage(LibsMsg.DRADIUS_HELP1.get(maxRadius));
-        sender.sendMessage(LibsMsg.CAN_USE_DISGS
-                .get(ChatColor.GREEN + StringUtils.join(allowedDisguises, ChatColor.RED + ", " + ChatColor.GREEN)));
+        if (allowedDisguises.isEmpty()) {
+            LibsMsg.NO_PERM.send(sender);
+            return;
+        }
+
+        LibsMsg.DRADIUS_HELP1.send(sender, DisguiseConfig.getDisguiseRadiusMax());
+        LibsMsg.CAN_USE_DISGS.send(sender, StringUtils.join(allowedDisguises, LibsMsg.CAN_USE_DISGS_SEPERATOR.get()));
 
         if (allowedDisguises.contains("player")) {
-            sender.sendMessage(LibsMsg.DRADIUS_HELP3.get());
+            LibsMsg.DRADIUS_HELP3.send(sender);
         }
 
-        sender.sendMessage(LibsMsg.DRADIUS_HELP4.get());
+        LibsMsg.DRADIUS_HELP4.send(sender);
 
         if (allowedDisguises.contains("dropped_item") || allowedDisguises.contains("falling_block")) {
-            sender.sendMessage(LibsMsg.DRADIUS_HELP5.get());
+            LibsMsg.DRADIUS_HELP5.send(sender);
         }
 
-        sender.sendMessage(LibsMsg.DRADIUS_HELP6.get());
+        LibsMsg.DRADIUS_HELP6.send(sender);
     }
 }

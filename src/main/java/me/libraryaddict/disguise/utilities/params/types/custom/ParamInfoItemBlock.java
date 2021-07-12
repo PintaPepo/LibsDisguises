@@ -6,6 +6,7 @@ import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.Arrays;
+import java.util.Locale;
 
 /**
  * Created by libraryaddict on 16/02/2020.
@@ -13,22 +14,45 @@ import java.util.Arrays;
 public class ParamInfoItemBlock extends ParamInfoItemStack {
     public ParamInfoItemBlock(Class paramClass, String name, String valueType, String description,
             Material[] possibleValues) {
-        super(paramClass, name, valueType, description,
-                Arrays.stream(possibleValues).filter(Material::isBlock).toArray(Material[]::new));
+        super(paramClass, name, valueType, description, Arrays.stream(possibleValues).filter(m -> {
+            switch (m) {
+                case CHEST:
+                case TRAPPED_CHEST:
+                    return false;
+                default:
+                    break;
+            }
+
+            if (!m.isBlock()) {
+                return false;
+            } else if (NmsVersion.v1_13.isSupported()) {
+                return true;
+            }
+
+            switch (m) {
+                case CAKE:
+                case FLOWER_POT:
+                case CAULDRON:
+                case BREWING_STAND:
+                    return false;
+                default:
+                    return true;
+            }
+        }).toArray(Material[]::new));
     }
 
     @Override
     public Object fromString(String string) {
-        String[] split = string.split("[ -]", -1);
+        String[] split = string.split("[:, -]", -1);
 
         if (split.length > (NmsVersion.v1_13.isSupported() ? 1 : 3)) {
             throw new IllegalArgumentException();
         }
 
-        Material material = ReflectionManager.getMaterial(split[0].toLowerCase());
+        Material material = ReflectionManager.getMaterial(split[0].toLowerCase(Locale.ENGLISH));
 
-        if (material == null) {
-            material = Material.getMaterial(split[0].toUpperCase());
+        if (material == null || material == Material.AIR) {
+            material = Material.getMaterial(split[0].toUpperCase(Locale.ENGLISH));
         }
 
         if (material == null || (material == Material.AIR && !split[0].equalsIgnoreCase("air"))) {

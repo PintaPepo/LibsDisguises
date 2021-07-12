@@ -5,10 +5,13 @@ import me.libraryaddict.disguise.LibsDisguises;
 import me.libraryaddict.disguise.utilities.plugin.BisectHosting;
 import me.libraryaddict.disguise.utilities.plugin.PluginInformation;
 import me.libraryaddict.disguise.utilities.reflection.ReflectionManager;
-import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.util.FileUtil;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
@@ -63,15 +66,15 @@ public class LibsPremium {
      * @param userID
      * @return true if userID does not contain __USER__
      */
-    private static Boolean isPremium(String userID) {
-        return !userID.contains("__USER__");
+    private static Boolean isPremium(String resourceID, String userID) {
+        return !userID.contains("__USER__") && resourceID.equals("32453");
     }
 
     /**
      * Returns true if this plugin is premium
      */
     public static Boolean isPremium() {
-        return thisPluginIsPaidFor == null ? isPremium(getUserID()) : thisPluginIsPaidFor;
+        return thisPluginIsPaidFor == null ? isPremium(getResourceID(), getUserID()) : thisPluginIsPaidFor;
     }
 
     /**
@@ -85,7 +88,7 @@ public class LibsPremium {
             return false;
         }
 
-        if (premiumVersion.startsWith("9.")){
+        if (premiumVersion.startsWith("9.")) {
             return false;
         }
 
@@ -107,7 +110,7 @@ public class LibsPremium {
         //return premiumVersion.equals(currentVersion);
     }
 
-    private static PluginInformation getInformation(File file) throws Exception {
+    public static PluginInformation getInformation(File file) throws Exception {
         try (URLClassLoader cl = new URLClassLoader(new URL[]{file.toURI().toURL()})) {
             Class c = cl.loadClass(LibsPremium.class.getName());
 
@@ -123,7 +126,7 @@ public class LibsPremium {
             }
 
             // Fetch the plugin.yml from the jar file
-            YamlConfiguration config = ReflectionManager.getPluginYaml(cl);
+            YamlConfiguration config = ReflectionManager.getPluginYAML(file);
             // No checks for null config as the correct error will be thrown on access
 
             Boolean premium;
@@ -137,7 +140,7 @@ public class LibsPremium {
                 userId = (String) c.getMethod("getUserID").invoke(null);
                 resourceId = (String) c.getMethod("getResourceID").invoke(null);
                 downloadId = (String) c.getMethod("getDownloadID").invoke(null);
-                premium = isPremium(userId);
+                premium = isPremium(resourceId, userId);
             }
 
             String pluginBuildDate = "??/??/????";
@@ -161,8 +164,8 @@ public class LibsPremium {
 
             String pluginVersion = config.getString("version");
 
-            return new PluginInformation(userId, resourceId, downloadId, premium, pluginVersion, pluginBuildNumber,
-                    pluginBuildDate);
+            return new PluginInformation(file.length(), userId, resourceId, downloadId, premium, pluginVersion,
+                    pluginBuildNumber, pluginBuildDate);
         }
     }
 
@@ -221,6 +224,12 @@ public class LibsPremium {
                 DisguiseUtilities.getLogger().info("Found a premium Lib's Disguises jar (" + fileInfo + ")");
                 DisguiseUtilities.getLogger().info("Registered to: " + getSanitizedUser(plugin.getUserID()));
 
+                // >.>
+                if (plugin.getBuildNumber() == null || !plugin.getBuildNumber().matches("#[0-9]+") ||
+                        Integer.parseInt(plugin.getBuildNumber().substring(1)) < 300) {
+                    file.delete();
+                    continue;
+                }
                 break;
             } else {
                 // You have a non-premium Lib's Disguises jar (LibsDisguises.jar v5.2.6, build #40, created
@@ -238,7 +247,7 @@ public class LibsPremium {
             if (bisectHosted = new BisectHosting().isBisectHosted("LibsDisguises")) {
                 DisguiseUtilities.getLogger().info("Hosted by BisectHosting! Premium enabled!");
 
-                paidInformation = new PluginInformation("0", "32453", "0", true, "0", "#0", "0");
+                paidInformation = new PluginInformation(0, "0", "32453", "0", true, "0", "#0", "0");
 
                 thisPluginIsPaidFor = true;
             } else {
@@ -290,7 +299,7 @@ public class LibsPremium {
                     pluginBuildDate = config.getString("build-date");
                 }
             }
-            catch (InvalidConfigurationException | IOException ex) {
+            catch (Exception ex) {
                 ex.printStackTrace();
             }
 
@@ -300,14 +309,62 @@ public class LibsPremium {
                 buildNo = "#" + buildNo;
             }
 
-            pluginInformation = new PluginInformation(getUserID(), getResourceID(), getDownloadID(),
-                    isPremium(getUserID()), version, buildNo, pluginBuildDate);
+            pluginInformation = new PluginInformation(LibsDisguises.getInstance().getFile().length(), getUserID(),
+                    getResourceID(), getDownloadID(), isPremium(getResourceID(), getUserID()), version, buildNo,
+                    pluginBuildDate);
         }
 
         if (!isPremium() || !LibsDisguises.getInstance().isReleaseBuild()) {
             doSecondaryCheck(version);
         } else {
             DisguiseUtilities.getLogger().info("Registered to: " + getSanitizedUser(getUserID()));
+
+            boolean foundBetter = false;
+
+            // Lets not do any sanity checks since it won't affect legit users
+            for (File f : LibsDisguises.getInstance().getDataFolder().listFiles()) {
+                if (f.isDirectory() || !f.getName().endsWith(".jar")) {
+                    continue;
+                }
+
+                try {
+                    PluginInformation info = getInformation(f);
+
+                    if (info.getBuildNumber() == null || !info.getBuildNumber().matches("#[0-9]+")) {
+                        f.delete();
+                        DisguiseUtilities.getLogger().info("Ew, I don't recognize " + f.getName());
+                        continue;
+                    } else if (Integer.parseInt(info.getBuildNumber().replace("#", "")) <
+                            Integer.parseInt(LibsDisguises.getInstance().getBuildNo().replace("#", ""))) {
+                        f.delete();
+                        DisguiseUtilities.getLogger().info("Ew, " + f.getName() + " is so old");
+                        continue;
+                    }
+
+                    if (!info.isLegit()) {
+                        f.delete();
+                        DisguiseUtilities.getLogger().info("Ew, I saw something nasty in " + f.getName());
+                        continue;
+                    }
+
+                    foundBetter = true;
+                    break;
+                } catch (ClassNotFoundException e) {
+                    DisguiseUtilities.getLogger().info("Ew, error about invalid Libs Disguises jar. Deleting " + f.getName());
+                    f.delete();
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                }
+            }
+
+            if (!foundBetter) {
+                File f = LibsDisguises.getInstance().getFile();
+
+                FileUtil.copy(f, new File(LibsDisguises.getInstance().getDataFolder(), f.getName()));
+
+                DisguiseUtilities.getLogger().info("Copied " + f.getName() +
+                        " to the plugin folder! You can use dev builds with premium enabled!");
+            }
         }
 
         if (isPremium()) {

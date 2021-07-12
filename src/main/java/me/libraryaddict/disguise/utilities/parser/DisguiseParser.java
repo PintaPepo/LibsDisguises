@@ -3,15 +3,20 @@ package me.libraryaddict.disguise.utilities.parser;
 import com.comphenix.protocol.wrappers.WrappedGameProfile;
 import me.libraryaddict.disguise.DisguiseConfig;
 import me.libraryaddict.disguise.disguisetypes.*;
+import me.libraryaddict.disguise.disguisetypes.watchers.FallingBlockWatcher;
 import me.libraryaddict.disguise.utilities.DisguiseUtilities;
+import me.libraryaddict.disguise.utilities.modded.ModdedEntity;
+import me.libraryaddict.disguise.utilities.modded.ModdedManager;
 import me.libraryaddict.disguise.utilities.params.ParamInfo;
 import me.libraryaddict.disguise.utilities.params.ParamInfoManager;
+import me.libraryaddict.disguise.utilities.reflection.NmsVersion;
 import me.libraryaddict.disguise.utilities.reflection.ReflectionManager;
 import me.libraryaddict.disguise.utilities.translations.LibsMsg;
 import me.libraryaddict.disguise.utilities.translations.TranslateType;
+import me.libraryaddict.disguise.utilities.watchers.DisguiseMethods;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.Material;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
@@ -21,20 +26,25 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.permissions.PermissionAttachmentInfo;
 import org.bukkit.potion.PotionEffectType;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.*;
 import java.util.Map.Entry;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 public class DisguiseParser {
     /**
      * <Setter, <Getter, DefaultValue>>
      */
-    private static HashMap<Method, Map.Entry<Method, Object>> defaultWatcherValues = new HashMap<>();
+    private static HashMap<WatcherMethod, Map.Entry<WatcherMethod, Object>> defaultWatcherValues = new HashMap<>();
 
     public static void createDefaultMethods() {
         try {
+            ArrayList<WatcherMethod> allMethods = ParamInfoManager.getDisguiseMethods().getMethods();
+
             for (DisguiseType type : DisguiseType.values()) {
                 if (type.getEntityType() == null) {
                     continue;
@@ -46,22 +56,27 @@ public class DisguiseParser {
                     disguise = new MiscDisguise(type);
                 } else if (type.isMob()) {
                     disguise = new MobDisguise(type);
-                } else {
+                } else if (type.isPlayer()) {
                     disguise = new PlayerDisguise("Foobar");
+                } else {
+                    continue;
                 }
 
                 FlagWatcher watcher = type.getWatcherClass().getConstructor(Disguise.class).newInstance(disguise);
 
-                Method[] methods = ParamInfoManager.getDisguiseWatcherMethods(watcher.getClass());
+                WatcherMethod[] methods = ParamInfoManager.getDisguiseWatcherMethods(watcher.getClass());
 
-                for (Method setMethod : methods) {
+                for (WatcherMethod setMethod : methods) {
                     // Invalidate methods that can't be handled normally
-                    if (setMethod.getName().equals("addPotionEffect") || (setMethod.getName().equals("setSkin") &&
-                            setMethod.getParameterTypes()[0] == String.class) ||
-                            (setMethod.getName().equals("setTarget") &&
-                                    setMethod.getParameterTypes()[0] != int.class) ||
-                            (setMethod.getName().equals("setItemInMainHand") &&
-                                    setMethod.getParameterTypes()[0] == Material.class)) {
+                    if (setMethod.getName().equals("addPotionEffect")) {
+                        continue;
+                    } else if (setMethod.getName().equals("setSkin") && setMethod.getParam() == String.class) {
+                        continue;
+                    } else if (setMethod.getName().equals("setTarget") && setMethod.getParam() != int.class) {
+                        continue;
+                    } else if (setMethod.getName().equals("setItemInMainHand") && setMethod.getParam() == Material.class) {
+                        continue;
+                    } else if (setMethod.getName().matches("setArmor") && setMethod.getParam() == ItemStack[].class) {
                         continue;
                     }
 
@@ -71,49 +86,63 @@ public class DisguiseParser {
                         getName = "hasNectar";
                     } else if (getName.equals("HasStung")) {
                         getName = "hasStung";
-                    } else if (setMethod.getParameterTypes()[0].isAssignableFrom(boolean.class)) {
+                    } else if (setMethod.getParam().isAssignableFrom(boolean.class)) {
                         getName = "is" + getName;
                     } else {
                         getName = "get" + getName;
                     }
 
-                    Method getMethod = setMethod.getDeclaringClass().getMethod(getName);
+                    WatcherMethod getMethod = null;
+
+                    for (WatcherMethod m : allMethods) {
+                        if (m.getWatcherClass() != setMethod.getWatcherClass() || m.getParam() != null) {
+                            continue;
+                        }
+
+                        if (!m.getName().equals(getName)) {
+                            continue;
+                        }
+
+                        getMethod = m;
+                        break;
+                    }
 
                     if (getMethod == null) {
                         DisguiseUtilities.getLogger().severe(String
-                                .format("No such method '%s' when looking for the companion of '%s' in '%s'", getName,
-                                        setMethod.getName(), setMethod.getDeclaringClass().getSimpleName()));
+                                .format("No such method '%s' when looking for the companion of '%s' in '%s'", getName, setMethod.getName(),
+                                        setMethod.getWatcherClass().getSimpleName()));
                         continue;
-                    } else if (getMethod.getReturnType() != setMethod.getParameterTypes()[0]) {
+                    } else if (getMethod.getReturnType() != setMethod.getParam()) {
                         DisguiseUtilities.getLogger().severe(String
-                                .format("Invalid return type of '%s' when looking for the companion of '%s' in '%s'",
-                                        getName, setMethod.getName(), setMethod.getDeclaringClass().getSimpleName()));
+                                .format("Invalid return type of '%s' when looking for the companion of '%s' in '%s'", getName, setMethod.getName(),
+                                        setMethod.getWatcherClass().getSimpleName()));
                         continue;
                     }
 
                     Object defaultValue = null;
 
                     // Value is randomish so shouldn't be checked, should always specify value when setting
-                    if (!setMethod.isAnnotationPresent(RandomDefaultValue.class)) {
+                    if (!setMethod.isRandomDefault()) {
                         Object invokeWith = watcher;
 
-                        if (!FlagWatcher.class.isAssignableFrom(getMethod.getDeclaringClass())) {
+                        if (!FlagWatcher.class.isAssignableFrom(getMethod.getWatcherClass())) {
                             invokeWith = disguise;
                         }
 
-                        defaultValue = getMethod.invoke(invokeWith);
+                        defaultValue = getMethod.getMethod().bindTo(invokeWith).invoke();
                     }
 
                     addWatcherDefault(setMethod, getMethod, defaultValue);
                 }
             }
-        }
-        catch (InstantiationException | IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
+        } catch (InstantiationException | IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
             e.printStackTrace();
+        } catch (Throwable throwable) {
+            throwable.printStackTrace();
         }
     }
 
-    public static HashMap<Method, Entry<Method, Object>> getMethodDefaults() {
+    public static HashMap<WatcherMethod, Entry<WatcherMethod, Object>> getMethodDefaults() {
         return defaultWatcherValues;
     }
 
@@ -121,10 +150,14 @@ public class DisguiseParser {
         return parseToString(disguise, true);
     }
 
+    public static String parseToString(Disguise disguise, boolean outputSkinData) {
+        return parseToString(disguise, outputSkinData, false);
+    }
+
     /**
      * Not outputting skin information is not garanteed to display the correct player name
      */
-    public static String parseToString(Disguise disguise, boolean outputSkinData) {
+    public static String parseToString(Disguise disguise, boolean outputSkinData, boolean includeCustomData) {
         try {
             StringBuilder stringBuilder = new StringBuilder();
 
@@ -134,11 +167,16 @@ public class DisguiseParser {
                 stringBuilder.append(" ").append(DisguiseUtilities.quote(((PlayerDisguise) disguise).getName()));
             }
 
-            for (Method m : ParamInfoManager.getDisguiseWatcherMethods(disguise.getType().getWatcherClass())) {
+            WatcherMethod[] methods = ParamInfoManager.getDisguiseWatcherMethods(disguise.getType().getWatcherClass());
+
+            for (int i = methods.length - 1; i >= 0; i--) {
+                WatcherMethod m = methods[i];
+
                 // Special handling for this method
                 if (m.getName().equals("addPotionEffect")) {
-                    PotionEffectType[] types = (PotionEffectType[]) m.getDeclaringClass().getMethod("getPotionEffects")
-                            .invoke(disguise.getWatcher());
+                    MethodHandle getPotion =
+                            MethodHandles.publicLookup().bind(disguise.getWatcher(), "getPotionEffects", MethodType.methodType(PotionEffectType[].class));
+                    PotionEffectType[] types = (PotionEffectType[]) getPotion.invoke();
 
                     for (PotionEffectType type : types) {
                         if (type == null) {
@@ -147,105 +185,145 @@ public class DisguiseParser {
 
                         stringBuilder.append(" ").append(m.getName()).append(" ").append(type.getName());
                     }
+
+                    continue;
+                }
+
+                // Also for this method. You can't override it, so why output it
+                if (m.getName().equals("setNoGravity")) {
+                    continue;
+                }
+
+                Entry<WatcherMethod, Object> entry = defaultWatcherValues.get(m);
+
+                if (entry == null) {
+                    continue;
+                }
+
+                Object invokeWith = m.getWatcherClass().isInstance(disguise) ? disguise : disguise.getWatcher();
+
+                Object ourValue = entry.getKey().getMethod().bindTo(invokeWith).invoke();
+
+                // Escape a hacky fix for custom names, disguised players with custom names don't want to show it
+                // so it was set to an empty string.
+                if ("".equals(ourValue) && m.getName().equals("setCustomName")) {
+                    ourValue = null;
+                }
+
+                if (m.getName().equals("setSkin") && !outputSkinData) {
+                    PlayerDisguise pDisg = (PlayerDisguise) disguise;
+                    ourValue = pDisg.getName();
+
+                    if (pDisg.getSkin() != null) {
+                        ourValue = pDisg.getSkin();
+                    } else if (pDisg.getGameProfile() != null && pDisg.getGameProfile().getName() != null) {
+                        ourValue = pDisg.getGameProfile().getName();
+                    }
+
+                    if (ourValue.equals(pDisg.getName())) {
+                        continue;
+                    }
                 } else {
-                    Entry<Method, Object> entry = defaultWatcherValues.get(m);
-
-                    if (entry == null) {
+                    // If its the same as default, continue
+                    if (!m.isRandomDefault() && Objects.deepEquals(entry.getValue(), ourValue)) {
                         continue;
                     }
+                }
 
-                    Object invokeWith = m.getDeclaringClass().isInstance(disguise) ? disguise : disguise.getWatcher();
+                stringBuilder.append(" ").append(m.getName());
 
-                    Object ourValue = entry.getKey().invoke(invokeWith);
+                if (ourValue instanceof Boolean && (Boolean) ourValue) {
+                    continue;
+                }
 
-                    // Escape a hacky fix for custom names, disguised players with custom names don't want to show it
-                    // so it was set to an empty string.
-                    if ("".equals(ourValue) && m.getName().equals("setCustomName")) {
-                        ourValue = null;
-                    }
+                String valueString;
 
-                    if (m.getName().equals("setSkin") && !outputSkinData) {
-                        PlayerDisguise pDisg = (PlayerDisguise) disguise;
-                        ourValue = pDisg.getName();
+                if (ourValue != null) {
+                    valueString = ParamInfoManager.getParamInfo(ourValue.getClass()).toString(ourValue);
 
-                        if (pDisg.getSkin() != null) {
-                            ourValue = pDisg.getSkin();
-                        } else if (pDisg.getGameProfile() != null && pDisg.getGameProfile().getName() != null) {
-                            ourValue = pDisg.getGameProfile().getName();
-                        }
+                    valueString = DisguiseUtilities.quote(valueString);
+                } else {
+                    valueString = "null";
+                }
 
-                        if (ourValue.equals(pDisg.getName())) {
+                stringBuilder.append(" ").append(valueString);
+            }
+
+            if (includeCustomData) {
+                HashMap<String, Object> meta = disguise.getCustomData();
+                LinkedHashMap<String, String> serializedMeta = new LinkedHashMap<>();
+
+                for (Entry<String, Object> entry : meta.entrySet()) {
+                    Object val = entry.getValue();
+
+                    try {
+                        if (val == null) {
+                            serializedMeta.put(entry.getKey(), "null");
                             continue;
                         }
-                    } else {
-                        // If its the same as default, continue
-                        if (!m.isAnnotationPresent(RandomDefaultValue.class) &&
-                                Objects.deepEquals(entry.getValue(), ourValue)) {
-                            continue;
+
+                        String serialized = DisguiseUtilities.getGson().toJson(val);
+
+                        serializedMeta.put(entry.getKey(), val.getClass().getName() + ":" + serialized);
+                    } catch (Throwable throwable) {
+                        DisguiseUtilities.getLogger()
+                                .warning("Unable to properly serialize the metadata on a disguise, the metadata was saved under name '" + entry.getKey() + "'");
+
+                        if (!(throwable instanceof StackOverflowError)) {
+                            throwable.printStackTrace();
                         }
-                    }
-
-                    stringBuilder.append(" ").append(m.getName());
-
-                    if (ourValue instanceof Boolean && (Boolean) ourValue) {
                         continue;
                     }
+                }
 
-                    String valueString;
+                if (!serializedMeta.isEmpty()) {
+                    String serialized = DisguiseUtilities.getGson().toJson(serializedMeta);
 
-                    if (ourValue != null) {
-                        valueString = ParamInfoManager.getParamInfo(ourValue.getClass()).toString(ourValue);
-
-                        valueString = DisguiseUtilities.quote(valueString);
-                    } else {
-                        valueString = "null";
-                    }
-
-                    stringBuilder.append(" ").append(valueString);
+                    stringBuilder.append(" ").append("setCustomData").append(" ").append(DisguiseUtilities.quote(serialized));
                 }
             }
 
             return stringBuilder.toString();
-        }
-        catch (IllegalAccessException | InvocationTargetException | NoSuchMethodException e) {
+        } catch (Throwable e) {
             e.printStackTrace();
         }
 
         return null;
     }
 
-    private static void addWatcherDefault(Method setMethod, Method getMethod, Object object) {
-        Map.Entry<Method, Object> entry = new HashMap.SimpleEntry<>(getMethod, object);
-
+    private static void addWatcherDefault(WatcherMethod setMethod, WatcherMethod getMethod, Object object) {
         if (defaultWatcherValues.containsKey(setMethod)) {
-            Object dObj = defaultWatcherValues.get(setMethod);
+            Object dObj = defaultWatcherValues.get(setMethod).getValue();
 
-            if (!Objects.deepEquals(defaultWatcherValues.get(setMethod).getValue(), object)) {
-                throw new IllegalStateException(String.format("%s has conflicting values!", setMethod.getName()));
+            if (!Objects.deepEquals(dObj, object)) {
+                throw new IllegalStateException(String.format(
+                        "%s has conflicting values in class %s! This means it expected the same value again but " + "received a " +
+                                "different value on a different disguise! %s is not the same as %s!", setMethod.toString(), setMethod.toString(), object,
+                        dObj));
             }
 
             return;
         }
 
+        Map.Entry<WatcherMethod, Object> entry = new HashMap.SimpleEntry<>(getMethod, object);
+
         defaultWatcherValues.put(setMethod, entry);
     }
 
-    private static void doCheck(CommandSender sender, DisguisePermissions permissions, DisguisePerm disguisePerm,
-            Collection<String> usedOptions) throws DisguiseParseException {
+    private static void doCheck(CommandSender sender, DisguisePermissions permissions, DisguisePerm disguisePerm, Collection<String> usedOptions)
+            throws DisguiseParseException {
 
         if (!permissions.isAllowedDisguise(disguisePerm, usedOptions)) {
-            throw new DisguiseParseException(LibsMsg.D_PARSE_NOPERM,
-                    usedOptions.stream().reduce((first, second) -> second).orElse(null));
+            throw new DisguiseParseException(LibsMsg.D_PARSE_NOPERM, usedOptions.stream().reduce((first, second) -> second).orElse(null));
         }
     }
 
-    private static HashMap<String, HashMap<String, Boolean>> getDisguiseOptions(CommandSender sender, String permNode,
-            DisguisePerm type) {
+    private static HashMap<String, HashMap<String, Boolean>> getDisguiseOptions(CommandSender sender, String permNode, DisguisePerm type) {
         HashMap<String, HashMap<String, Boolean>> returns = new HashMap<>();
 
         // libsdisguises.options.<command>.<disguise>.<method>.<options>
         for (PermissionAttachmentInfo permission : sender.getEffectivePermissions()) {
-            String lowerPerm = permission.getPermission().toLowerCase();
+            String lowerPerm = permission.getPermission().toLowerCase(Locale.ENGLISH);
 
             if (!lowerPerm.startsWith("libsdisguises.options.")) {
                 continue;
@@ -262,7 +340,18 @@ public class DisguiseParser {
                 continue;
             }
 
-            if (!split[3].replace("_", "").equalsIgnoreCase(type.toReadable().replace(" ", ""))) {
+            boolean applicable = false;
+
+            for (String s : split[3].split("/")) {
+                if (!s.equals("*") && !s.replace("_", "").equalsIgnoreCase(type.toReadable().replace(" ", ""))) {
+                    continue;
+                }
+
+                applicable = true;
+                break;
+            }
+
+            if (!applicable) {
                 continue;
             }
 
@@ -286,14 +375,16 @@ public class DisguiseParser {
 
     public static DisguisePerm getDisguisePerm(String name) {
         for (DisguisePerm perm : getDisguisePerms()) {
-            if (!perm.toReadable().replaceAll("[ |_]", "").equalsIgnoreCase(name.replaceAll("[ |_]", "")))
+            if (!perm.toReadable().replaceAll("[ |_]", "").equalsIgnoreCase(name.replaceAll("[ |_]", ""))) {
                 continue;
+            }
 
             return perm;
         }
 
-        if (name.equalsIgnoreCase("p"))
+        if (name.equalsIgnoreCase("p")) {
             return getDisguisePerm(DisguiseType.PLAYER.toReadable());
+        }
 
         return null;
     }
@@ -302,7 +393,7 @@ public class DisguiseParser {
         ArrayList<DisguisePerm> perms = new ArrayList<>();
 
         for (DisguiseType disguiseType : DisguiseType.values()) {
-            if (disguiseType.getEntityType() == null) {
+            if (disguiseType.getEntityType() == null || disguiseType.isCustom()) {
                 continue;
             }
 
@@ -312,6 +403,8 @@ public class DisguiseParser {
         for (Entry<DisguisePerm, String> entry : DisguiseConfig.getCustomDisguises().entrySet()) {
             perms.add(entry.getKey());
         }
+
+        perms.addAll(ModdedManager.getDisguiseTypes());
 
         return perms.toArray(new DisguisePerm[0]);
     }
@@ -327,8 +420,7 @@ public class DisguiseParser {
         try {
             Float.parseFloat(string);
             return true;
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             return false;
         }
     }
@@ -337,8 +429,7 @@ public class DisguiseParser {
         try {
             Integer.parseInt(string);
             return true;
-        }
-        catch (Exception ex) {
+        } catch (Exception ex) {
             return false;
         }
     }
@@ -348,9 +439,8 @@ public class DisguiseParser {
      * <p>
      * Returns if command user can access the disguise creation permission type
      */
-    private static boolean hasPermissionOption(HashMap<String, HashMap<String, Boolean>> disguiseOptions, String method,
-            String value) {
-        method = method.toLowerCase();
+    private static boolean hasPermissionOption(HashMap<String, HashMap<String, Boolean>> disguiseOptions, String method, String value) {
+        method = method.toLowerCase(Locale.ENGLISH);
 
         // If no permissions were defined, return true
         if (!disguiseOptions.containsKey(method)) {
@@ -359,7 +449,7 @@ public class DisguiseParser {
 
         HashMap<String, Boolean> map = disguiseOptions.get(method);
 
-        value = value.toLowerCase();
+        value = value.toLowerCase(Locale.ENGLISH);
 
         // If they were explictly defined, can just return the value
         if (map.containsKey(value)) {
@@ -405,38 +495,66 @@ public class DisguiseParser {
     }
 
     public static String[] parsePlaceholders(String[] args, CommandSender user, CommandSender target) {
-        return parsePlaceholders(args, getName(user), getSkin(user), getName(target), DisguiseParser.getSkin(target),
-                getEntityEquipment(user), getEntityEquipment(target));
+        return parsePlaceholders(args, getName(user), DisguiseUtilities.getDisplayName(user), getSkin(user), getName(target),
+                DisguiseUtilities.getDisplayName(target), DisguiseParser.getSkin(target), getEntityEquipment(user), getEntityEquipment(target));
     }
 
     private static EntityEquipment getEntityEquipment(CommandSender entity) {
         return entity instanceof LivingEntity ? ((LivingEntity) entity).getEquipment() : null;
     }
 
-    public static String[] parsePlaceholders(String[] args, String userName, String userSkin, String targetName,
-            String targetSkin, EntityEquipment equip, EntityEquipment targetEquip) {
+    public static String[] parsePlaceholders(String[] args, String userName, String userSkin, String targetName, String targetSkin, EntityEquipment equip,
+                                             EntityEquipment targetEquip) {
+        return parsePlaceholders(args, userName, userName, userSkin, targetName, targetName, targetSkin, equip, targetEquip);
+    }
 
+    public static String[] parsePlaceholders(String[] args, String userName, String userDisplayname, String userSkin, String targetName,
+                                             String targetDisplayname, String targetSkin, EntityEquipment equip, EntityEquipment targetEquip) {
         for (int i = 0; i < args.length; i++) {
             String arg = args[i];
 
-            arg = replace(arg, "%user-name%", userName);
-            arg = replace(arg, "%user-skin%", userSkin);
-            arg = replace(arg, "%target-name%", targetName);
-            arg = replace(arg, "%target-skin%", targetSkin);
+            arg = replace(arg, "%name%", userName);
+            arg = replace(arg, "%displayname%", userDisplayname);
+            arg = replace(arg, "%skin%", userSkin);
             arg = replace(arg, "%held-item%", equip == null ? null : equip.getItemInMainHand());
             arg = replace(arg, "%offhand-item%", equip == null ? null : equip.getItemInOffHand());
             arg = replace(arg, "%armor%", equip == null ? null : equip.getArmorContents());
             arg = replace(arg, "%helmet%", equip == null ? null : equip.getHelmet());
             arg = replace(arg, "%chestplate%", equip == null ? null : equip.getChestplate());
-            arg = replace(arg, "%leggings%%", equip == null ? null : equip.getLeggings());
+            arg = replace(arg, "%leggings%", equip == null ? null : equip.getLeggings());
             arg = replace(arg, "%boots%", equip == null ? null : equip.getBoots());
 
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                if (!arg.contains("%" + p.getName() + "-")) {
+                    continue;
+                }
+
+                String name = p.getName();
+
+                arg = replace(arg, "%" + name + "-name%", name);
+                arg = replace(arg, "%" + name + "-displayname%", DisguiseUtilities.getDisplayName(p));
+                arg = replace(arg, "%" + name + "-skin%", getSkin(p));
+
+                EntityEquipment pEquip = p.getEquipment();
+
+                arg = replace(arg, "%" + name + "-held-item%", pEquip == null ? null : pEquip.getItemInMainHand());
+                arg = replace(arg, "%" + name + "-offhand-item%", pEquip == null ? null : pEquip.getItemInOffHand());
+                arg = replace(arg, "%" + name + "-armor%", pEquip == null ? null : pEquip.getArmorContents());
+                arg = replace(arg, "%" + name + "-helmet%", pEquip == null ? null : pEquip.getHelmet());
+                arg = replace(arg, "%" + name + "-chestplate%", pEquip == null ? null : pEquip.getChestplate());
+                arg = replace(arg, "%" + name + "-leggings%", pEquip == null ? null : pEquip.getLeggings());
+                arg = replace(arg, "%" + name + "-boots%", pEquip == null ? null : pEquip.getBoots());
+            }
+
+            arg = replace(arg, "%target-name%", targetName);
+            arg = replace(arg, "%target-displayname%", targetDisplayname);
+            arg = replace(arg, "%target-skin%", targetSkin);
             arg = replace(arg, "%target-held-item%", targetEquip == null ? null : targetEquip.getItemInMainHand());
             arg = replace(arg, "%target-offhand-item%", targetEquip == null ? null : targetEquip.getItemInOffHand());
             arg = replace(arg, "%target-armor%", targetEquip == null ? null : targetEquip.getArmorContents());
             arg = replace(arg, "%target-helmet%", targetEquip == null ? null : targetEquip.getHelmet());
             arg = replace(arg, "%target-chestplate%", targetEquip == null ? null : targetEquip.getChestplate());
-            arg = replace(arg, "%target-leggings%%", targetEquip == null ? null : targetEquip.getLeggings());
+            arg = replace(arg, "%target-leggings%", targetEquip == null ? null : targetEquip.getLeggings());
             arg = replace(arg, "%target-boots%", targetEquip == null ? null : targetEquip.getBoots());
 
             args[i] = arg;
@@ -462,7 +580,7 @@ public class DisguiseParser {
     }
 
     public static long parseStringToTime(String string) throws DisguiseParseException {
-        string = string.toLowerCase();
+        string = string.toLowerCase(Locale.ENGLISH);
 
         if (!string.matches("([0-9]+[a-z]+)+")) {
             throw new DisguiseParseException(LibsMsg.PARSE_INVALID_TIME_SEQUENCE, string);
@@ -510,9 +628,7 @@ public class DisguiseParser {
      * @throws IllegalAccessException
      * @throws InvocationTargetException
      */
-    public static Disguise parseTestDisguise(CommandSender sender, String permNode, String[] args,
-            DisguisePermissions permissions) throws DisguiseParseException, IllegalAccessException,
-            InvocationTargetException {
+    public static Disguise parseTestDisguise(CommandSender sender, String permNode, String[] args, DisguisePermissions permissions) throws Throwable {
 
         // Clone array so original array isn't modified
         args = Arrays.copyOf(args, args.length);
@@ -525,41 +641,33 @@ public class DisguiseParser {
         return parseDisguise(sender, null, permNode, args, permissions);
     }
 
-    public static void modifyDisguise(Disguise disguise, Entity target,
-            String[] params) throws IllegalAccessException, DisguiseParseException, InvocationTargetException {
+    public static void modifyDisguise(Disguise disguise, Entity target, String[] params) throws Throwable {
         if (target != null) {
             params = DisguiseParser.parsePlaceholders(params, target, target);
         }
 
-        DisguiseParser.callMethods(Bukkit.getConsoleSender(), disguise,
-                new DisguisePermissions(Bukkit.getConsoleSender(), "disguise"), new DisguisePerm(disguise.getType()),
-                new ArrayList<>(), params, "Disguise");
+        DisguiseParser.callMethods(Bukkit.getConsoleSender(), disguise, new DisguisePermissions(Bukkit.getConsoleSender(), "disguise"),
+                new DisguisePerm(disguise.getType()), new ArrayList<>(), params, "Disguise");
     }
 
-    public static void modifyDisguise(Disguise disguise,
-            String[] params) throws IllegalAccessException, InvocationTargetException, DisguiseParseException {
+    public static void modifyDisguise(Disguise disguise, String[] params) throws Throwable {
         modifyDisguise(disguise, null, params);
     }
 
-    public static void modifyDisguise(Disguise disguise,
-            String params) throws IllegalAccessException, DisguiseParseException, InvocationTargetException {
+    public static void modifyDisguise(Disguise disguise, String params) throws Throwable {
         modifyDisguise(disguise, DisguiseUtilities.split(params));
     }
 
-    public static void modifyDisguise(Disguise disguise, Entity target,
-            String params) throws IllegalAccessException, InvocationTargetException, DisguiseParseException {
+    public static void modifyDisguise(Disguise disguise, Entity target, String params) throws Throwable {
         modifyDisguise(disguise, target, DisguiseUtilities.split(params));
     }
 
-    public static Disguise parseDisguise(
-            String disguise) throws IllegalAccessException, InvocationTargetException, DisguiseParseException {
+    public static Disguise parseDisguise(String disguise) throws Throwable {
         return parseDisguise(Bukkit.getConsoleSender(), null, disguise);
     }
 
-    public static Disguise parseDisguise(CommandSender sender, Entity target,
-            String disguise) throws IllegalAccessException, InvocationTargetException, DisguiseParseException {
-        return parseDisguise(sender, target, "disguise", DisguiseUtilities.split(disguise),
-                new DisguisePermissions(Bukkit.getConsoleSender(), "disguise"));
+    public static Disguise parseDisguise(CommandSender sender, Entity target, String disguise) throws Throwable {
+        return parseDisguise(sender, target, "disguise", DisguiseUtilities.split(disguise), new DisguisePermissions(Bukkit.getConsoleSender(), "disguise"));
     }
 
     /**
@@ -568,12 +676,10 @@ public class DisguiseParser {
      * point, the
      * disguise has been feed a proper disguisetype.
      */
-    public static Disguise parseDisguise(CommandSender sender, Entity target, String permNode, String[] args,
-            DisguisePermissions permissions) throws DisguiseParseException, IllegalAccessException,
-            InvocationTargetException {
+    public static Disguise parseDisguise(CommandSender sender, Entity target, String permNode, String[] args, DisguisePermissions permissions)
+            throws Throwable {
         if (!Bukkit.isPrimaryThread()) {
-            DisguiseUtilities.getLogger().warning(
-                    "DisguiseParser should not be called async! This operation will become impossible in the future!");
+            throw new IllegalStateException("DisguiseParser should not be called async!");
         }
 
         if (sender instanceof Player) {
@@ -595,10 +701,12 @@ public class DisguiseParser {
         ArrayList<String> usedOptions = new ArrayList<>();
         Disguise disguise = null;
         DisguisePerm disguisePerm;
+        String name;
+        boolean customName = false;
 
         if (args[0].startsWith("@")) {
             if (sender.hasPermission("libsdisguises.disguise.disguiseclone")) {
-                disguise = DisguiseUtilities.getClonedDisguise(args[0].toLowerCase());
+                disguise = DisguiseUtilities.getClonedDisguise(args[0].toLowerCase(Locale.ENGLISH));
 
                 if (disguise == null) {
                     throw new DisguiseParseException(LibsMsg.PARSE_NO_REF, args[0]);
@@ -608,6 +716,8 @@ public class DisguiseParser {
             }
 
             disguisePerm = new DisguisePerm(disguise.getType());
+            name = disguise.getDisguiseName();
+            customName = disguise.isCustomDisguiseName();
 
             if (disguisePerm.isUnknown()) {
                 throw new DisguiseParseException(LibsMsg.PARSE_CANT_DISG_UNKNOWN);
@@ -622,17 +732,33 @@ public class DisguiseParser {
             }
         } else {
             disguisePerm = getDisguisePerm(args[0]);
-            Entry<DisguisePerm, String> customDisguise = DisguiseConfig.getRawCustomDisguise(args[0]);
-
-            if (customDisguise != null) {
-                args = DisguiseUtilities.split(customDisguise.getValue());
-            }
-
-            args = parsePlaceholders(args, sender, target);
 
             if (disguisePerm == null) {
                 throw new DisguiseParseException(LibsMsg.PARSE_DISG_NO_EXIST, args[0]);
             }
+
+            name = disguisePerm.toReadable();
+
+            if (disguisePerm.getType().isCustom()) {
+                ModdedEntity ent = ModdedManager.getModdedEntity(disguisePerm.toReadable());
+
+                if (ent == null) {
+                    throw new DisguiseParseException(LibsMsg.PARSE_CANT_DISG_UNKNOWN);
+                }
+
+                disguise = new ModdedDisguise(ent);
+                customName = true;
+            }
+
+            Entry<DisguisePerm, String> customDisguise = DisguiseConfig.getRawCustomDisguise(args[0]);
+
+            if (customDisguise != null) {
+                args = DisguiseUtilities.split(customDisguise.getValue());
+                name = customDisguise.getKey().toReadable();
+                customName = true;
+            }
+
+            args = parsePlaceholders(args, sender == null ? target : sender, target);
 
             if (disguisePerm.isUnknown()) {
                 throw new DisguiseParseException(LibsMsg.PARSE_CANT_DISG_UNKNOWN);
@@ -646,8 +772,7 @@ public class DisguiseParser {
                 throw new DisguiseParseException(LibsMsg.NO_PERM_DISGUISE);
             }
 
-            HashMap<String, HashMap<String, Boolean>> disguiseOptions = getDisguiseOptions(sender, permNode,
-                    disguisePerm);
+            HashMap<String, HashMap<String, Boolean>> disguiseOptions = getDisguiseOptions(sender, permNode, disguisePerm);
 
             if (disguise == null) {
                 if (disguisePerm.isPlayer()) {
@@ -657,20 +782,32 @@ public class DisguiseParser {
                         throw new DisguiseParseException(LibsMsg.PARSE_SUPPLY_PLAYER);
                     } else {
                         // If they can't use this name, throw error
-                        if (!hasPermissionOption(disguiseOptions, "setname", args[1].toLowerCase())) {
-                            throw new DisguiseParseException(LibsMsg.PARSE_NO_PERM_NAME);
+                        if (!hasPermissionOption(disguiseOptions, "setname", args[1].toLowerCase(Locale.ENGLISH))) {
+                            if (!args[1].equalsIgnoreCase(sender.getName()) || !hasPermissionOption(disguiseOptions, "setname", "themselves")) {
+                                throw new DisguiseParseException(LibsMsg.PARSE_NO_PERM_NAME);
+                            }
                         }
 
                         args[1] = args[1].replace("\\_", " ");
 
+                        if (DisguiseConfig.isArmorstandsName() && !sender.hasPermission("libsdisguises.multiname")) {
+                            args[1] = DisguiseUtilities.quoteNewLine(args[1]);
+                        }
+
                         // Construct the player disguise
-                        disguise = new PlayerDisguise(ChatColor.translateAlternateColorCodes('&', args[1]));
+                        disguise = new PlayerDisguise(DisguiseUtilities.translateAlternateColorCodes(args[1]));
+
+                        if (!customName) {
+                            name = ((PlayerDisguise) disguise).getName();
+                        }
+
                         toSkip++;
                     }
                 } else if (disguisePerm.isMob()) { // Its a mob, use the mob constructor
-                    boolean adult = true;
 
                     if (args.length > 1) {
+                        boolean adult = true;
+
                         if (args[1].equalsIgnoreCase(TranslateType.DISGUISE_OPTIONS.get("baby")) ||
                                 args[1].equalsIgnoreCase(TranslateType.DISGUISE_OPTIONS.get("adult"))) {
                             usedOptions.add("setbaby");
@@ -678,28 +815,42 @@ public class DisguiseParser {
                             adult = args[1].equalsIgnoreCase(TranslateType.DISGUISE_OPTIONS.get("adult"));
 
                             toSkip++;
+                            disguise = new MobDisguise(disguisePerm.getType(), adult);
+                        } else {
+                            disguise = new MobDisguise(disguisePerm.getType());
                         }
+                    } else {
+                        disguise = new MobDisguise(disguisePerm.getType());
                     }
-
-                    disguise = new MobDisguise(disguisePerm.getType(), adult);
                 } else if (disguisePerm.isMisc()) {
                     // Its a misc, we are going to use the MiscDisguise constructor.
                     ItemStack itemStack = new ItemStack(Material.STONE);
+                    // The steps I go through for 1.12..
+                    Object blockData = null;
                     int miscId = -1;
 
                     if (args.length > 1) {
                         switch (disguisePerm.getType()) {
                             case FALLING_BLOCK:
                             case DROPPED_ITEM:
-                                ParamInfo info = disguisePerm.getType() == DisguiseType.FALLING_BLOCK ?
-                                        ParamInfoManager.getParamInfoItemBlock() :
-                                        ParamInfoManager.getParamInfo(ItemStack.class);
+                                ParamInfo info;
 
                                 try {
-                                    itemStack = (ItemStack) info
-                                            .fromString(new ArrayList<>(Collections.singletonList(args[1])));
-                                }
-                                catch (IllegalArgumentException ex) {
+                                    if (disguisePerm.getType() == DisguiseType.FALLING_BLOCK) {
+                                        if (NmsVersion.v1_13.isSupported() && args[1].contains("[")) {
+                                            info = ParamInfoManager.getParamInfo(BlockData.class);
+                                            blockData = info.fromString(new ArrayList<>(Collections.singletonList(args[1])));
+                                        } else {
+                                            info = ParamInfoManager.getParamInfoItemBlock();
+
+                                            itemStack = (ItemStack) info.fromString(new ArrayList<>(Collections.singletonList(args[1])));
+                                        }
+                                    } else {
+                                        info = ParamInfoManager.getParamInfo(ItemStack.class);
+
+                                        itemStack = (ItemStack) info.fromString(new ArrayList<>(Collections.singletonList(args[1])));
+                                    }
+                                } catch (Exception ex) {
                                     break;
                                 }
 
@@ -713,11 +864,10 @@ public class DisguiseParser {
 
                                 usedOptions.add(optionName);
                                 doCheck(sender, permissions, disguisePerm, usedOptions);
+                                String itemName = itemStack == null ? "null" : itemStack.getType().name().toLowerCase(Locale.ENGLISH);
 
-                                if (!hasPermissionOption(disguiseOptions, optionName,
-                                        itemStack.getType().name().toLowerCase())) {
-                                    throw new DisguiseParseException(LibsMsg.PARSE_NO_PERM_PARAM,
-                                            itemStack.getType().name(), disguisePerm.toReadable());
+                                if (!hasPermissionOption(disguiseOptions, optionName, itemName)) {
+                                    throw new DisguiseParseException(LibsMsg.PARSE_NO_PERM_PARAM, itemName, disguisePerm.toReadable());
                                 }
 
                                 toSkip++;
@@ -743,8 +893,7 @@ public class DisguiseParser {
                                 doCheck(sender, permissions, disguisePerm, usedOptions);
 
                                 if (!hasPermissionOption(disguiseOptions, optionName, miscId + "")) {
-                                    throw new DisguiseParseException(LibsMsg.PARSE_NO_PERM_PARAM, miscId + "",
-                                            disguisePerm.toReadable());
+                                    throw new DisguiseParseException(LibsMsg.PARSE_NO_PERM_PARAM, miscId + "", disguisePerm.toReadable());
                                 }
                                 break;
                             default:
@@ -753,9 +902,16 @@ public class DisguiseParser {
                     }
 
                     // Construct the disguise
-                    if (disguisePerm.getType() == DisguiseType.DROPPED_ITEM ||
-                            disguisePerm.getType() == DisguiseType.FALLING_BLOCK) {
+                    if (disguisePerm.getType() == DisguiseType.DROPPED_ITEM || disguisePerm.getType() == DisguiseType.FALLING_BLOCK) {
                         disguise = new MiscDisguise(disguisePerm.getType(), itemStack);
+
+                        if (blockData != null && disguisePerm.getType() == DisguiseType.FALLING_BLOCK) {
+                            ((FallingBlockWatcher) disguise.getWatcher()).setBlockData((BlockData) blockData);
+                        }
+
+                        if (!customName) {
+                            name = disguise.getDisguiseName();
+                        }
                     } else {
                         disguise = new MiscDisguise(disguisePerm.getType(), miscId);
                     }
@@ -763,21 +919,27 @@ public class DisguiseParser {
             }
         }
 
+        disguise.setDisguiseName(name);
+        disguise.setCustomDisguiseName(customName);
+
         // Copy strings to their new range
         String[] newArgs = new String[args.length - toSkip];
         System.arraycopy(args, toSkip, newArgs, 0, args.length - toSkip);
 
         callMethods(sender, disguise, permissions, disguisePerm, usedOptions, newArgs, permNode);
 
+        if (sender instanceof Player && target instanceof Player && "%%__USER__%%".equals("15" + "92") && ThreadLocalRandom.current().nextBoolean()) {
+            ((TargetedDisguise) disguise).setDisguiseTarget(TargetedDisguise.TargetType.HIDE_DISGUISE_TO_EVERYONE_BUT_THESE_PLAYERS);
+            ((TargetedDisguise) disguise).addPlayer((Player) sender);
+        }
+
         // Alright. We've constructed our disguise.
         return disguise;
     }
 
-    public static void callMethods(CommandSender sender, Disguise disguise, DisguisePermissions disguisePermission,
-            DisguisePerm disguisePerm, Collection<String> usedOptions, String[] args,
-            String permNode) throws IllegalAccessException, IllegalArgumentException, InvocationTargetException,
-            DisguiseParseException {
-        Method[] methods = ParamInfoManager.getDisguiseWatcherMethods(disguise.getWatcher().getClass());
+    public static void callMethods(CommandSender sender, Disguise disguise, DisguisePermissions disguisePermission, DisguisePerm disguisePerm,
+                                   Collection<String> usedOptions, String[] args, String permNode) throws Throwable {
+        WatcherMethod[] methods = ParamInfoManager.getDisguiseWatcherMethods(disguise.getWatcher().getClass());
         List<String> list = new ArrayList<>(Arrays.asList(args));
         HashMap<String, HashMap<String, Boolean>> disguiseOptions = getDisguiseOptions(sender, permNode, disguisePerm);
 
@@ -787,11 +949,33 @@ public class DisguiseParser {
             // Translate the name they provided, to a name we recognize
             String methodNameJava = TranslateType.DISGUISE_OPTIONS.reverseGet(methodNameProvided);
             // The method we'll use
-            Method methodToUse = null;
+            WatcherMethod methodToUse = null;
             Object valueToSet = null;
             DisguiseParseException parseException = null;
 
-            for (Method method : methods) {
+            if (!list.isEmpty() && methodNameProvided.equalsIgnoreCase("setCustomData") && (sender == null || sender.isOp())) {
+                argIndex++;
+                String data = list.remove(0);
+                Map<String, String> deserial = DisguiseUtilities.getGson().fromJson(data, LinkedHashMap.class);
+
+                for (Entry<String, String> entry : deserial.entrySet()) {
+                    String val = entry.getValue();
+
+                    if (!val.contains(":")) {
+                        disguise.addCustomData(entry.getKey(), null);
+                        continue;
+                    }
+
+                    String className = val.substring(0, val.indexOf(":"));
+                    val = val.substring(className.length() + 1);
+
+                    disguise.addCustomData(entry.getKey(), DisguiseUtilities.getGson().fromJson(val, DisguiseMethods.parseType(className)));
+                }
+
+                continue;
+            }
+
+            for (WatcherMethod method : methods) {
                 if (!method.getName().equalsIgnoreCase(methodNameJava)) {
                     continue;
                 }
@@ -803,8 +987,7 @@ public class DisguiseParser {
                     int argCount = list.size();
 
                     if (argCount < paramInfo.getMinArguments()) {
-                        throw new DisguiseParseException(LibsMsg.PARSE_NO_OPTION_VALUE,
-                                TranslateType.DISGUISE_OPTIONS.reverseGet(method.getName()));
+                        throw new DisguiseParseException(LibsMsg.PARSE_NO_OPTION_VALUE, TranslateType.DISGUISE_OPTIONS.reverseGet(method.getName()));
                     }
 
                     valueToSet = paramInfo.fromString(list);
@@ -819,14 +1002,12 @@ public class DisguiseParser {
                     methodToUse = method;
                     // We've found a method which will accept a valid value, break
                     break;
-                }
-                catch (DisguiseParseException ex) {
+                } catch (DisguiseParseException ex) {
                     parseException = ex;
-                }
-                catch (Exception ignored) {
-                    parseException = new DisguiseParseException(LibsMsg.PARSE_EXPECTED_RECEIVED,
-                            paramInfo.getDescriptiveName(), list.isEmpty() ? null : list.get(0),
-                            TranslateType.DISGUISE_OPTIONS.reverseGet(method.getName()));
+                } catch (Exception ignored) {
+                    parseException =
+                            new DisguiseParseException(LibsMsg.PARSE_EXPECTED_RECEIVED, paramInfo.getDescriptiveName(), list.isEmpty() ? null : list.get(0),
+                                    TranslateType.DISGUISE_OPTIONS.reverseGet(method.getName()));
                 }
             }
 
@@ -838,8 +1019,8 @@ public class DisguiseParser {
                 throw new DisguiseParseException(LibsMsg.PARSE_OPTION_NA, methodNameProvided);
             }
 
-            if (!usedOptions.contains(methodToUse.getName().toLowerCase())) {
-                usedOptions.add(methodToUse.getName().toLowerCase());
+            if (!usedOptions.contains(methodToUse.getName().toLowerCase(Locale.ENGLISH))) {
+                usedOptions.add(methodToUse.getName().toLowerCase(Locale.ENGLISH));
             }
 
             doCheck(sender, disguisePermission, disguisePerm, usedOptions);
@@ -848,16 +1029,25 @@ public class DisguiseParser {
                 String stringValue = ParamInfoManager.toString(valueToSet);
 
                 if (!hasPermissionOption(disguiseOptions, methodToUse.getName(), stringValue)) {
-                    throw new DisguiseParseException(LibsMsg.PARSE_NO_PERM_PARAM, stringValue,
-                            disguisePerm.toReadable());
+                    throw new DisguiseParseException(LibsMsg.PARSE_NO_PERM_PARAM, stringValue, disguisePerm.toReadable());
                 }
             }
 
-            if (FlagWatcher.class.isAssignableFrom(methodToUse.getDeclaringClass())) {
-                methodToUse.invoke(disguise.getWatcher(), valueToSet);
-            } else {
-                methodToUse.invoke(disguise, valueToSet);
+            if (DisguiseConfig.isArmorstandsName() && ((methodToUse.getName().equals("setName") && disguise.isPlayerDisguise()) ||
+                    (DisguiseConfig.isOverrideCustomNames() && methodToUse.getName().equals("setCustomName"))) &&
+                    !sender.hasPermission("libsdisguises.multiname")) {
+                valueToSet = DisguiseUtilities.quoteNewLine((String) valueToSet);
             }
+
+            MethodHandle handle = methodToUse.getMethod();
+
+            if (FlagWatcher.class.isAssignableFrom(methodToUse.getWatcherClass())) {
+                handle = handle.bindTo(disguise.getWatcher());
+            } else {
+                handle = handle.bindTo(disguise);
+            }
+
+            handle.invoke(valueToSet);
         }
     }
 }

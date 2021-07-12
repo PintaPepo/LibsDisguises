@@ -35,7 +35,7 @@ public class CopyDisguiseInteraction implements LibsEntityInteract {
                                 DisguiseParser.parseToString(disguise), true);
             }
         } else {
-            player.sendMessage(LibsMsg.TARGET_NOT_DISGUISED.get());
+            LibsMsg.TARGET_NOT_DISGUISED.send(player);
         }
     }
 }

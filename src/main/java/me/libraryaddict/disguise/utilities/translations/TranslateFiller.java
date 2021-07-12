@@ -1,14 +1,16 @@
 package me.libraryaddict.disguise.utilities.translations;
 
 import me.libraryaddict.disguise.disguisetypes.DisguiseType;
+import me.libraryaddict.disguise.utilities.DisguiseUtilities;
 import me.libraryaddict.disguise.utilities.params.ParamInfo;
 import me.libraryaddict.disguise.utilities.params.ParamInfoManager;
+import me.libraryaddict.disguise.utilities.parser.WatcherMethod;
 import org.apache.commons.lang.StringUtils;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 
-import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Locale;
 
 /**
  * Created by libraryaddict on 10/06/2017.
@@ -48,7 +50,7 @@ public class TranslateFiller {
             String[] split = type.name().split("_");
 
             for (int i = 0; i < split.length; i++) {
-                split[i] = split[i].substring(0, 1) + split[i].substring(1).toLowerCase();
+                split[i] = split[i].charAt(0) + split[i].substring(1).toLowerCase(Locale.ENGLISH);
             }
 
             TranslateType.DISGUISES.save(StringUtils.join(split, " "), "Name for the " + type.name() + " disguise");
@@ -57,9 +59,9 @@ public class TranslateFiller {
                 continue;
             }
 
-            for (Method method : ParamInfoManager.getDisguiseWatcherMethods(type.getWatcherClass())) {
-                Class para = method.getParameterTypes()[0];
-                String className = method.getDeclaringClass().getSimpleName().replace("Watcher", "");
+            for (WatcherMethod method : ParamInfoManager.getDisguiseWatcherMethods(type.getWatcherClass())) {
+                Class para = method.getParam();
+                String className = method.getWatcherClass().getSimpleName().replace("Watcher", "");
 
                 if (className.equals("Flag") || className.equals("Disguise"))
                     className = "Entity";
@@ -105,7 +107,7 @@ public class TranslateFiller {
                 .save("DisgiseType", "Used for the disgiuse modify radius command to list all " + "disguisetypes");
 
         for (LibsMsg msg : LibsMsg.values()) {
-            TranslateType.MESSAGES.save(msg.getRaw(), "Reference: " + msg.name());
+            TranslateType.MESSAGES.save(msg, DisguiseUtilities.translateAlternateColorCodes(msg.getRaw()), "Reference: " + msg.name());
         }
 
         for (TranslateType type : TranslateType.values()) {

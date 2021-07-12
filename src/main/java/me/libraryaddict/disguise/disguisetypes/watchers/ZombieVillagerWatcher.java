@@ -1,5 +1,6 @@
 package me.libraryaddict.disguise.disguisetypes.watchers;
 
+import me.libraryaddict.disguise.DisguiseConfig;
 import me.libraryaddict.disguise.disguisetypes.Disguise;
 import me.libraryaddict.disguise.disguisetypes.MetaIndex;
 import me.libraryaddict.disguise.disguisetypes.VillagerData;
@@ -16,7 +17,9 @@ public class ZombieVillagerWatcher extends ZombieWatcher {
     public ZombieVillagerWatcher(Disguise disguise) {
         super(disguise);
 
-        setProfession(Profession.values()[new Random().nextInt(Profession.values().length)]);
+        if (DisguiseConfig.isRandomDisguises()) {
+            setProfession(Profession.values()[new Random().nextInt(Profession.values().length)]);
+        }
     }
 
     public boolean isShaking() {
@@ -41,12 +44,12 @@ public class ZombieVillagerWatcher extends ZombieWatcher {
         }
     }
 
-    @NmsAddedIn(val = NmsVersion.v1_14)
+    @NmsAddedIn(NmsVersion.v1_14)
     public VillagerData getVillagerData() {
         return getData(MetaIndex.ZOMBIE_VILLAGER_PROFESSION);
     }
 
-    @NmsAddedIn(val = NmsVersion.v1_14)
+    @NmsAddedIn(NmsVersion.v1_14)
     public void setVillagerData(VillagerData villagerData) {
         setData(MetaIndex.ZOMBIE_VILLAGER_PROFESSION, villagerData);
         sendData(MetaIndex.ZOMBIE_VILLAGER_PROFESSION);
@@ -66,34 +69,34 @@ public class ZombieVillagerWatcher extends ZombieWatcher {
         }
     }
 
-    @NmsAddedIn(val = NmsVersion.v1_14)
+    @NmsAddedIn(NmsVersion.v1_14)
     public Villager.Type getType() {
         return getVillagerData().getType();
     }
 
     @Deprecated
-    @NmsAddedIn(val = NmsVersion.v1_14)
+    @NmsAddedIn(NmsVersion.v1_14)
     public void setType(Villager.Type type) {
         setVillagerData(new VillagerData(type, getProfession(), getLevel()));
     }
 
-    @NmsAddedIn(val = NmsVersion.v1_14)
+    @NmsAddedIn(NmsVersion.v1_14)
     public int getLevel() {
         return getVillagerData().getLevel();
     }
 
     @Deprecated
-    @NmsAddedIn(val = NmsVersion.v1_14)
+    @NmsAddedIn(NmsVersion.v1_14)
     public void setLevel(int level) {
         setVillagerData(new VillagerData(getType(), getProfession(), getLevel()));
     }
 
-    @NmsAddedIn(val = NmsVersion.v1_14)
+    @NmsAddedIn(NmsVersion.v1_14)
     public Villager.Type getBiome() {
         return getType();
     }
 
-    @NmsAddedIn(val = NmsVersion.v1_14)
+    @NmsAddedIn(NmsVersion.v1_14)
     public void setBiome(Villager.Type type) {
         setType(type);
     }

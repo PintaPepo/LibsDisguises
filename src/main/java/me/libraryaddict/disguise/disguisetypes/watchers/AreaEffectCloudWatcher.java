@@ -1,6 +1,7 @@
 package me.libraryaddict.disguise.disguisetypes.watchers;
 
 import com.comphenix.protocol.wrappers.WrappedParticle;
+import me.libraryaddict.disguise.DisguiseConfig;
 import me.libraryaddict.disguise.disguisetypes.Disguise;
 import me.libraryaddict.disguise.disguisetypes.FlagWatcher;
 import me.libraryaddict.disguise.disguisetypes.MetaIndex;
@@ -19,7 +20,9 @@ public class AreaEffectCloudWatcher extends FlagWatcher {
     public AreaEffectCloudWatcher(Disguise disguise) {
         super(disguise);
 
-        setColor(Color.fromRGB(RandomUtils.nextInt(256), RandomUtils.nextInt(256), RandomUtils.nextInt(256)));
+        if (DisguiseConfig.isRandomDisguises()) {
+            setColor(Color.fromRGB(RandomUtils.nextInt(256), RandomUtils.nextInt(256), RandomUtils.nextInt(256)));
+        }
     }
 
     public float getRadius() {
@@ -27,8 +30,11 @@ public class AreaEffectCloudWatcher extends FlagWatcher {
     }
 
     public void setRadius(float radius) {
-        if (radius > 30)
+        if (radius > 30) {
             radius = 30;
+        } else if (radius < 0.1) {
+            radius = 0.1f;
+        }
 
         setData(MetaIndex.AREA_EFFECT_RADIUS, radius);
         sendData(MetaIndex.AREA_EFFECT_RADIUS);
@@ -54,12 +60,12 @@ public class AreaEffectCloudWatcher extends FlagWatcher {
         sendData(MetaIndex.AREA_EFFECT_IGNORE_RADIUS);
     }
 
-    @NmsAddedIn(val = NmsVersion.v1_13)
+    @NmsAddedIn(NmsVersion.v1_13)
     public <T> void setParticle(Particle particle, T particleData) {
         setParticle(WrappedParticle.create(particle, particleData));
     }
 
-    @NmsAddedIn(val = NmsVersion.v1_13)
+    @NmsAddedIn(NmsVersion.v1_13)
     public WrappedParticle getParticle() {
         if (NmsVersion.v1_13.isSupported()) {
             return getData(MetaIndex.AREA_EFFECT_PARTICLE);
@@ -72,7 +78,7 @@ public class AreaEffectCloudWatcher extends FlagWatcher {
         }
     }
 
-    @NmsAddedIn(val = NmsVersion.v1_13)
+    @NmsAddedIn(NmsVersion.v1_13)
     public void setParticle(WrappedParticle particle) {
         if (NmsVersion.v1_13.isSupported()) {
             setData(MetaIndex.AREA_EFFECT_PARTICLE, particle);

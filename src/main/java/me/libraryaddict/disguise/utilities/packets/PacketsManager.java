@@ -10,11 +10,11 @@ import me.libraryaddict.disguise.LibsDisguises;
 import me.libraryaddict.disguise.disguisetypes.Disguise;
 import me.libraryaddict.disguise.utilities.DisguiseUtilities;
 import me.libraryaddict.disguise.utilities.packets.packetlisteners.*;
+import me.libraryaddict.disguise.utilities.reflection.NmsVersion;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
-import java.util.concurrent.TimeUnit;
 
 public class PacketsManager {
     private static PacketListener clientInteractEntityListener;
@@ -26,6 +26,8 @@ public class PacketsManager {
     private static PacketListener viewDisguisesListener;
     private static boolean viewDisguisesListenerEnabled;
     private static PacketsHandler packetsHandler;
+    private static PacketListener destroyListener;
+    private static PacketListener scoreboardTeamListener;
 
     public static void addPacketListeners() {
         // Add a client listener to cancel them interacting with uninteractable disguised entitys.
@@ -37,6 +39,7 @@ public class PacketsManager {
 
         ProtocolLibrary.getProtocolManager().addPacketListener(clientInteractEntityListener);
         ProtocolLibrary.getProtocolManager().addPacketListener(tabListListener);
+        ProtocolLibrary.getProtocolManager().addPacketListener(new PacketListenerClientCustomPayload());
 
         // Now I call this and the main listener is registered!
         setupMainPacketsListener();
@@ -143,6 +146,7 @@ public class PacketsManager {
                 packetsToListen.add(Server.ENTITY_TELEPORT);
                 packetsToListen.add(Server.REL_ENTITY_MOVE);
                 packetsToListen.add(Server.ENTITY_VELOCITY);
+                packetsToListen.add(Server.MOUNT);
             }
 
             // Add equipment packet
@@ -161,8 +165,17 @@ public class PacketsManager {
             }
 
             mainListener = new PacketListenerMain(LibsDisguises.getInstance(), packetsToListen);
+            destroyListener = new PacketListenerEntityDestroy(LibsDisguises.getInstance());
 
             ProtocolLibrary.getProtocolManager().addPacketListener(mainListener);
+            ProtocolLibrary.getProtocolManager().addPacketListener(destroyListener);
+
+            if (NmsVersion.v1_13.isSupported() &&
+                    DisguiseConfig.getPlayerNameType() != DisguiseConfig.PlayerNameType.ARMORSTANDS) {
+                scoreboardTeamListener = new PacketListenerScoreboardTeam();
+
+                ProtocolLibrary.getProtocolManager().addPacketListener(scoreboardTeamListener);
+            }
         }
     }
 
@@ -184,7 +197,7 @@ public class PacketsManager {
                         if (enabled) {
                             DisguiseUtilities.setupFakeDisguise(disguise);
                         } else {
-                            DisguiseUtilities.removeSelfDisguise(player);
+                            DisguiseUtilities.removeSelfDisguise(disguise);
                         }
 
                         if (inventoryModifierEnabled &&

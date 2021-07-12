@@ -4,10 +4,13 @@ import com.comphenix.protocol.PacketType;
 import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.reflect.StructureModifier;
+import com.mojang.datafixers.util.Pair;
 import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import me.libraryaddict.disguise.LibsDisguises;
 import me.libraryaddict.disguise.disguisetypes.Disguise;
+import me.libraryaddict.disguise.utilities.reflection.NmsVersion;
 import me.libraryaddict.disguise.utilities.reflection.ReflectionManager;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -16,28 +19,22 @@ import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 
 import java.lang.reflect.InvocationTargetException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Created by libraryaddict on 3/01/2019.
  */
+@Getter
+@RequiredArgsConstructor
+@Setter
 public class LibsPackets {
-    private ArrayList<PacketContainer> packets = new ArrayList<>();
-    private HashMap<Integer, ArrayList<PacketContainer>> delayedPackets = new HashMap<>();
-    private Disguise disguise;
-    private boolean doNothing;
-
-    public LibsPackets(Disguise disguise) {
-        this.disguise = disguise;
-    }
-
-    public void setUnhandled() {
-        doNothing = true;
-    }
-
-    public boolean isUnhandled() {
-        return doNothing;
-    }
+    private final ArrayList<PacketContainer> packets = new ArrayList<>();
+    private final HashMap<Integer, ArrayList<PacketContainer>> delayedPacketsMap = new HashMap<>();
+    private final Disguise disguise;
+    private boolean unhandled;
 
     public Disguise getDisguise() {
         return disguise;
@@ -56,24 +53,21 @@ public class LibsPackets {
     }
 
     public void addDelayedPacket(PacketContainer packet, int ticksDelayed) {
-        if (!delayedPackets.containsKey(ticksDelayed))
-            delayedPackets.put(ticksDelayed, new ArrayList<>());
+        if (!delayedPacketsMap.containsKey(ticksDelayed)) {
+            delayedPacketsMap.put(ticksDelayed, new ArrayList<>());
+        }
 
-        delayedPackets.get(ticksDelayed).add(packet);
+        delayedPacketsMap.get(ticksDelayed).add(packet);
     }
 
     public ArrayList<PacketContainer> getPackets() {
         return packets;
     }
 
-    public Collection<ArrayList<PacketContainer>> getDelayedPackets() {
-        return delayedPackets.values();
-    }
-
     public void sendDelayed(final Player observer) {
-        for (Map.Entry<Integer, ArrayList<PacketContainer>> entry : delayedPackets.entrySet()) {
+        for (Map.Entry<Integer, ArrayList<PacketContainer>> entry : getDelayedPacketsMap().entrySet()) {
             Bukkit.getScheduler().scheduleSyncDelayedTask(LibsDisguises.getInstance(), () -> {
-                if (!disguise.isDisguiseInUse()) {
+                if (!getDisguise().isDisguiseInUse()) {
                     ArrayList<PacketContainer> packets = entry.getValue();
 
                     if (packets.stream().noneMatch(p -> p.getType() == PacketType.Play.Server.PLAYER_INFO)) {
@@ -85,10 +79,10 @@ public class LibsPackets {
 
                 try {
                     for (PacketContainer packet : entry.getValue()) {
-                        ProtocolLibrary.getProtocolManager().sendServerPacket(observer, packet, false);
+                        // To have right click handled properly, equip packets sent are normal
+                        ProtocolLibrary.getProtocolManager().sendServerPacket(observer, packet, packet.getType() == PacketType.Play.Server.ENTITY_EQUIPMENT);
                     }
-                }
-                catch (InvocationTargetException e) {
+                } catch (InvocationTargetException e) {
                     e.printStackTrace();
                 }
             }, entry.getKey());
@@ -97,11 +91,11 @@ public class LibsPackets {
 
     private PacketContainer createPacket(EquipmentSlot slot) {
         // Get what the disguise wants to show for its armor
-        ItemStack itemToSend = disguise.getWatcher().getItemStack(slot);
+        ItemStack itemToSend = getDisguise().getWatcher().getItemStack(slot);
 
         // If the disguise armor isn't visible
         if (itemToSend == null) {
-            itemToSend = ReflectionManager.getEquipment(slot, disguise.getEntity());
+            itemToSend = ReflectionManager.getEquipment(slot, getDisguise().getEntity());
 
             // If natural armor isn't sent either
             if (itemToSend == null || itemToSend.getType() == Material.AIR) {
@@ -115,9 +109,17 @@ public class LibsPackets {
 
         StructureModifier<Object> mods = packet.getModifier();
 
-        mods.write(0, disguise.getEntity().getEntityId());
-        mods.write(1, ReflectionManager.createEnumItemSlot(slot));
-        mods.write(2, ReflectionManager.getNmsItem(itemToSend));
+        mods.write(0, getDisguise().getEntity().getEntityId());
+
+        if (NmsVersion.v1_16.isSupported()) {
+            List<Pair<Object, Object>> list = new ArrayList<>();
+            list.add(Pair.of(ReflectionManager.createEnumItemSlot(slot), ReflectionManager.getNmsItem(itemToSend)));
+
+            mods.write(1, list);
+        } else {
+            mods.write(1, ReflectionManager.createEnumItemSlot(slot));
+            mods.write(2, ReflectionManager.getNmsItem(itemToSend));
+        }
 
         return packet;
     }

@@ -8,7 +8,7 @@ import me.libraryaddict.disguise.utilities.reflection.NmsVersion;
 /**
  * Created by libraryaddict on 14/12/2019.
  */
-@NmsAddedIn(val = NmsVersion.v1_15)
+@NmsAddedIn(NmsVersion.v1_15)
 public class BeeWatcher extends AgeableWatcher {
     public BeeWatcher(Disguise disguise) {
         super(disguise);
@@ -48,7 +48,7 @@ public class BeeWatcher extends AgeableWatcher {
     }
 
     private boolean getBeeFlag(int value) {
-        return (getData(MetaIndex.PANDA_META) & value) != 0;
+        return (getData(MetaIndex.BEE_META) & value) != 0;
     }
 
     private void setBeeFlag(int no, boolean flag) {

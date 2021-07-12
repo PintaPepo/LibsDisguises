@@ -12,8 +12,6 @@ import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.HashMap;
-import java.util.UUID;
 
 /**
  * Created by libraryaddict on 3/01/2019.
@@ -33,6 +31,7 @@ public class PacketsHandler {
         packetHandlers.add(new PacketHandlerCollect());
         packetHandlers.add(new PacketHandlerEntityStatus());
         packetHandlers.add(new PacketHandlerEquipment(this));
+        packetHandlers.add(new PacketHandlerAttachEntity());
 
         packetHandlers.add(new PacketHandlerHeadRotation());
 
@@ -73,9 +72,8 @@ public class PacketsHandler {
                 }
             }
 
-            packets.setUnhandled();
-        }
-        catch (Exception e) {
+            packets.setUnhandled(true);
+        } catch (Exception e) {
             e.printStackTrace();
         }
 

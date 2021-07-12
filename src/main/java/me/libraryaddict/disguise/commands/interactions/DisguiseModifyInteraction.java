@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import me.libraryaddict.disguise.DisguiseAPI;
 import me.libraryaddict.disguise.disguisetypes.Disguise;
 import me.libraryaddict.disguise.disguisetypes.DisguiseType;
+import me.libraryaddict.disguise.utilities.DisguiseUtilities;
 import me.libraryaddict.disguise.utilities.LibsEntityInteract;
 import me.libraryaddict.disguise.utilities.parser.DisguiseParseException;
 import me.libraryaddict.disguise.utilities.parser.DisguiseParser;
@@ -37,7 +38,7 @@ public class DisguiseModifyInteraction implements LibsEntityInteract {
         Disguise disguise = DisguiseAPI.getDisguise(p, entity);
 
         if (disguise == null) {
-            p.sendMessage(LibsMsg.UNDISG_PLAYER_FAIL.get(entityName));
+            LibsMsg.UNDISG_PLAYER_FAIL.send(p, entityName);
             return;
         }
 
@@ -47,22 +48,18 @@ public class DisguiseModifyInteraction implements LibsEntityInteract {
         DisguisePerm disguisePerm = new DisguisePerm(disguise.getType());
 
         if (!perms.isAllowedDisguise(disguisePerm, Arrays.asList(options))) {
-            p.sendMessage(LibsMsg.DMODPLAYER_NOPERM.get());
+            LibsMsg.DMODPLAYER_NOPERM.send(p);
             return;
         }
 
         try {
-            DisguiseParser
-                    .callMethods(p, disguise, perms, disguisePerm, new ArrayList<>(Arrays.asList(options)), options,
-                            "DisguiseModifyEntity");
-            p.sendMessage(LibsMsg.LISTENER_MODIFIED_DISG.get());
-        }
-        catch (DisguiseParseException ex) {
+            DisguiseParser.callMethods(p, disguise, perms, disguisePerm, new ArrayList<>(Arrays.asList(options)), options, "DisguiseModifyEntity");
+            LibsMsg.LISTENER_MODIFIED_DISG.send(p);
+        } catch (DisguiseParseException ex) {
             if (ex.getMessage() != null) {
-                p.sendMessage(ex.getMessage());
+                DisguiseUtilities.sendMessage(p, ex.getMessage());
             }
-        }
-        catch (Exception ex) {
+        } catch (Throwable ex) {
             ex.printStackTrace();
         }
     }

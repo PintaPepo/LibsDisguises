@@ -9,7 +9,6 @@ import me.libraryaddict.disguise.utilities.parser.DisguisePerm;
 import me.libraryaddict.disguise.utilities.parser.DisguisePermissions;
 import me.libraryaddict.disguise.utilities.translations.LibsMsg;
 import org.apache.commons.lang.StringUtils;
-import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
@@ -23,14 +22,14 @@ public class DisguiseModifyEntityCommand extends DisguiseBaseCommand implements 
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!(sender instanceof Player)) {
-            sender.sendMessage(LibsMsg.NO_CONSOLE.get());
+            LibsMsg.NO_CONSOLE.send(sender);
             return true;
         }
 
         DisguisePermissions permissions = getPermissions(sender);
 
         if (!permissions.hasPermissions()) {
-            sender.sendMessage(LibsMsg.NO_PERM.get());
+            LibsMsg.NO_PERM.send(sender);
             return true;
         }
 
@@ -45,7 +44,7 @@ public class DisguiseModifyEntityCommand extends DisguiseBaseCommand implements 
                 new DisguiseModifyInteraction(DisguiseUtilities.split(StringUtils.join(args, " "))),
                 DisguiseConfig.getDisguiseEntityExpire());
 
-        sender.sendMessage(LibsMsg.DMODIFYENT_CLICK.get(DisguiseConfig.getDisguiseEntityExpire()));
+        LibsMsg.DMODIFYENT_CLICK.send(sender, DisguiseConfig.getDisguiseEntityExpire());
         return true;
     }
 
@@ -79,8 +78,8 @@ public class DisguiseModifyEntityCommand extends DisguiseBaseCommand implements 
     protected void sendCommandUsage(CommandSender sender, DisguisePermissions permissions) {
         ArrayList<String> allowedDisguises = getAllowedDisguises(permissions);
 
-        sender.sendMessage(LibsMsg.DMODENT_HELP1.get());
-        sender.sendMessage(LibsMsg.DMODIFY_HELP3
-                .get(ChatColor.GREEN + StringUtils.join(allowedDisguises, ChatColor.RED + ", " + ChatColor.GREEN)));
+        LibsMsg.DMODENT_HELP1.send(sender);
+        LibsMsg.DMODIFY_HELP3.send(sender,
+                StringUtils.join(allowedDisguises, LibsMsg.CAN_USE_DISGS_SEPERATOR.get()));
     }
 }

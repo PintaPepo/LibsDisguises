@@ -1,7 +1,5 @@
 package me.libraryaddict.disguise.utilities;
 
-import com.google.gson.Gson;
-import org.apache.commons.lang.StringUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -11,6 +9,19 @@ import java.util.Arrays;
  * Created by libraryaddict on 25/10/2018.
  */
 public class DisguiseUtilitiesTest {
+    @Test
+    public void testNewlineSplitter() {
+        Assert.assertArrayEquals(new String[]{"Name 1", "Name 2"}, DisguiseUtilities.splitNewLine("Name 1\nName 2"));
+        Assert.assertArrayEquals(new String[]{"Name 1", "Name 2"}, DisguiseUtilities.splitNewLine("Name 1\\nName 2"));
+        Assert.assertArrayEquals(new String[]{"Name 1\\", "Name 2"},
+                DisguiseUtilities.splitNewLine("Name 1\\\nName 2"));
+        Assert.assertArrayEquals(new String[]{"Name 1\\nName 2"}, DisguiseUtilities.splitNewLine("Name 1\\\\nName 2"));
+        Assert.assertArrayEquals(new String[]{"Name 1\\", "Name 2"},
+                DisguiseUtilities.splitNewLine("Name 1\\\\\\nName 2"));
+        Assert.assertArrayEquals(new String[]{"Name 1\\\\nName 2"},
+                DisguiseUtilities.splitNewLine("Name 1\\\\\\\\nName 2"));
+    }
+
     @Test
     public void testQuoteSplitter() {
         // Test if splits are correct

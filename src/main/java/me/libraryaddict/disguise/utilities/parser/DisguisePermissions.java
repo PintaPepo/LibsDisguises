@@ -5,6 +5,7 @@ import me.libraryaddict.disguise.disguisetypes.DisguiseType;
 import org.bukkit.entity.Ageable;
 import org.bukkit.entity.Animals;
 import org.bukkit.entity.Monster;
+import org.bukkit.entity.Player;
 import org.bukkit.permissions.Permissible;
 import org.bukkit.permissions.PermissionAttachmentInfo;
 
@@ -44,7 +45,7 @@ public class DisguisePermissions {
         private boolean wildcardCommand;
 
         public ParsedPermission(DisguisePerm[] disguisePerm, HashMap<String, Boolean> options, byte inheritance,
-                boolean wildcardCommand) {
+                                boolean wildcardCommand) {
             this.disguisePerm = new Vector<>(Arrays.asList(disguisePerm));
             this.options = options;
             this.inheritance = inheritance;
@@ -106,7 +107,7 @@ public class DisguisePermissions {
      * @param commandName      A lowercase string consisting of the name of one of Lib's Disguises commands
      */
     public DisguisePermissions(Permissible permissionHolder, String commandName) {
-        loadPermissions(permissionHolder, commandName.toLowerCase());
+        loadPermissions(permissionHolder, commandName.toLowerCase(Locale.ENGLISH));
     }
 
     /**
@@ -138,8 +139,9 @@ public class DisguisePermissions {
 
         String disguiseName = split[2];
 
-        DisguisePerm dPerm = DisguiseParser.getDisguisePerm(disguiseName);
         HashMap<String, Boolean> options = getOptions(permission);
+
+        DisguisePerm dPerm = DisguiseParser.getDisguisePerm(disguiseName);
 
         // If this refers to a specific disguise
         if (dPerm != null) {
@@ -196,7 +198,7 @@ public class DisguisePermissions {
         }
 
         for (PermissionAttachmentInfo permission : sender.getEffectivePermissions()) {
-            String perm = permission.getPermission().toLowerCase();
+            String perm = permission.getPermission().toLowerCase(Locale.ENGLISH);
 
             String[] split = perm.split("\\.");
 
@@ -233,7 +235,16 @@ public class DisguisePermissions {
 
         List<ParsedPermission> list = new ArrayList<>();
 
+        ArrayList<String> valids = new ArrayList<>();
+
         for (Map.Entry<String, Boolean> entry : permissions.entrySet()) {
+            String key = entry.getKey();
+
+            if (key.split("\\.").length > 2 && key.split("\\.")[2].equalsIgnoreCase("valid")) {
+                valids.add(key);
+                continue;
+            }
+
             ParsedPermission temp = parsePermission(entry.getKey());
 
             if (temp == null) {
@@ -243,6 +254,20 @@ public class DisguisePermissions {
             temp.setNegated(!entry.getValue());
 
             list.add(temp);
+        }
+
+        for (String valid : valids) {
+            HashMap<String, Boolean> options = getOptions(valid);
+
+            String key = valid.split("\\.")[1];
+
+            if (!key.equals("*") && !key.equalsIgnoreCase(commandName)) {
+                continue;
+            }
+
+            for (ParsedPermission perms : list) {
+                perms.options.putAll(options);
+            }
         }
 
         // Sorted from 5 to 0 where "*" is first and "Cow" is last
@@ -357,6 +382,11 @@ public class DisguisePermissions {
                 storage.negatedOptions.add("setinvisible");
             }
 
+            if (sender instanceof Player && !sender.isOp() && !DisguiseConfig.isExplicitDisguisePermissions()) {
+                storage.permittedOptions.remove("setYModifier");
+                storage.negatedOptions.add("setYModifier");
+            }
+
             disguises.add(storage);
         }
     }
@@ -384,8 +414,16 @@ public class DisguisePermissions {
             if (disguiseType.isMisc()) {
                 return 3;
             }
+        } else if (permissionName.equals("custom")) {
+            if (disguisePerm.isCustomDisguise()) {
+                return 3;
+            }
+        } else if (permissionName.equals("vanilla")) {
+            if (!disguisePerm.isCustomDisguise()) {
+                return 4;
+            }
         } else if (permissionName.equals("*")) {
-            return 4;
+            return 5;
         }
 
         return -1;
@@ -435,14 +473,15 @@ public class DisguisePermissions {
             if (!storage.permittedOptions.isEmpty() || storage.negatedOptions.isEmpty()) {
                 // Check if they're trying to use anything they shouldn't
                 if (!disguiseOptions.stream()
-                        .allMatch(option -> storage.permittedOptions.contains(option.toLowerCase()))) {
+                        .allMatch(option -> storage.permittedOptions.contains(option.toLowerCase(Locale.ENGLISH)))) {
                     return false;
                 }
             }
         }
 
         // If the user is using a forbidden option, return false. Otherwise true
-        return disguiseOptions.stream().noneMatch(option -> storage.negatedOptions.contains(option.toLowerCase()));
+        return disguiseOptions.stream()
+                .noneMatch(option -> storage.negatedOptions.contains(option.toLowerCase(Locale.ENGLISH)));
     }
 
     public boolean isAllowedDisguise(DisguisePerm disguisePerm) {

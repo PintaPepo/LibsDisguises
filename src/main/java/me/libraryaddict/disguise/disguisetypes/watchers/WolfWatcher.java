@@ -45,11 +45,22 @@ public class WolfWatcher extends TameableWatcher {
     }
 
     public boolean isAngry() {
-        return isTameableFlag(2);
+        return getAnger() > 0;
+        //return isTameableFlag(2);
     }
 
     public void setAngry(boolean angry) {
-        setTameableFlag(2, angry);
+        setAnger(angry ? 1 : 0);
+        //setTameableFlag(2, angry);
+    }
+
+    public int getAnger() {
+        return getData(MetaIndex.WOLF_ANGER);
+    }
+
+    public void setAnger(int anger) {
+        setData(MetaIndex.WOLF_ANGER, anger);
+        sendData(MetaIndex.WOLF_ANGER);
     }
 
     /**
@@ -57,7 +68,7 @@ public class WolfWatcher extends TameableWatcher {
      *
      * @return
      */
-    @NmsRemovedIn(val = NmsVersion.v1_15)
+    @NmsRemovedIn(NmsVersion.v1_15)
     @Deprecated
     public float getDamageTaken() {
         return getData(MetaIndex.WOLF_DAMAGE);
@@ -69,7 +80,7 @@ public class WolfWatcher extends TameableWatcher {
      * @param damage
      */
     @Deprecated
-    @NmsRemovedIn(val = NmsVersion.v1_15)
+    @NmsRemovedIn(NmsVersion.v1_15)
     public void setDamageTaken(float damage) {
         setData(MetaIndex.WOLF_DAMAGE, damage);
         sendData(MetaIndex.WOLF_DAMAGE);

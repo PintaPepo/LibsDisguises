@@ -5,16 +5,16 @@ import me.libraryaddict.disguise.DisguiseAPI;
 import me.libraryaddict.disguise.DisguiseConfig;
 import me.libraryaddict.disguise.disguisetypes.Disguise;
 import me.libraryaddict.disguise.disguisetypes.DisguiseType;
-import me.libraryaddict.disguise.disguisetypes.PlayerDisguise;
 import me.libraryaddict.disguise.disguisetypes.watchers.LivingWatcher;
+import me.libraryaddict.disguise.utilities.DisguiseUtilities;
 import me.libraryaddict.disguise.utilities.LibsEntityInteract;
 import me.libraryaddict.disguise.utilities.parser.DisguiseParseException;
 import me.libraryaddict.disguise.utilities.parser.DisguiseParser;
 import me.libraryaddict.disguise.utilities.translations.LibsMsg;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
-import org.bukkit.scoreboard.Team;
 
 /**
  * Created by libraryaddict on 4/04/2020.
@@ -36,32 +36,24 @@ public class DisguiseEntityInteraction implements LibsEntityInteract {
         Disguise disguise;
 
         try {
-            disguise = DisguiseParser.parseDisguise(p, entity, "disguiseentity", disguiseArgs,
-                    DisguiseParser.getPermissions(p, "disguiseentity"));
-        }
-        catch (DisguiseParseException e) {
+            disguise = DisguiseParser.parseDisguise(p, entity, "disguiseentity", disguiseArgs, DisguiseParser.getPermissions(p, "disguiseentity"));
+        } catch (DisguiseParseException e) {
             if (e.getMessage() != null) {
-                p.sendMessage(e.getMessage());
+                DisguiseUtilities.sendMessage(p, e.getMessage());
             }
 
             return;
-        }
-        catch (Exception e) {
+        } catch (Throwable e) {
             e.printStackTrace();
             return;
         }
 
-        if (disguise.isMiscDisguise() && !DisguiseConfig.isMiscDisguisesForLivingEnabled() &&
-                entity instanceof LivingEntity) {
-            p.sendMessage(LibsMsg.DISABLED_LIVING_TO_MISC.get());
+        if (disguise.isMiscDisguise() && !DisguiseConfig.isMiscDisguisesForLivingEnabled() && entity instanceof LivingEntity) {
+            LibsMsg.DISABLED_LIVING_TO_MISC.send(p);
         } else {
-            if (entity instanceof Player && DisguiseConfig.isNameOfPlayerShownAboveDisguise() &&
-                    !entity.hasPermission("libsdisguises.hidename")) {
+            if (entity instanceof Player && DisguiseConfig.isNameOfPlayerShownAboveDisguise() && !entity.hasPermission("libsdisguises.hidename")) {
                 if (disguise.getWatcher() instanceof LivingWatcher) {
-                    Team team = ((Player) entity).getScoreboard().getEntryTeam(entity.getName());
-
-                    disguise.getWatcher().setCustomName((team == null ? "" : team.getPrefix()) + entity.getName() +
-                            (team == null ? "" : team.getSuffix()));
+                    disguise.getWatcher().setCustomName(getDisplayName(entity));
 
                     if (DisguiseConfig.isNameAboveHeadAlwaysVisible()) {
                         disguise.getWatcher().setCustomNameVisible(true);
@@ -69,46 +61,50 @@ public class DisguiseEntityInteraction implements LibsEntityInteract {
                 }
             }
 
-            DisguiseAPI.disguiseEntity(entity, disguise);
+            DisguiseAPI.disguiseEntity(p, entity, disguise);
 
-            String disguiseName;
-
-            if (disguise instanceof PlayerDisguise) {
-                disguiseName = ((PlayerDisguise) disguise).getName();
-            } else {
-                disguiseName = disguise.getType().toReadable();
-            }
+            String disguiseName = disguise.getDisguiseName();
 
             // Jeez, maybe I should redo my messages here
             if (disguise.isDisguiseInUse()) {
                 if (disguise.isPlayerDisguise()) {
                     if (entity instanceof Player) {
-                        p.sendMessage(LibsMsg.LISTEN_ENTITY_PLAYER_DISG_PLAYER.get(entityName, disguiseName));
+                        LibsMsg.LISTEN_ENTITY_PLAYER_DISG_PLAYER.send(p, entityName, disguiseName);
                     } else {
-                        p.sendMessage(LibsMsg.LISTEN_ENTITY_ENTITY_DISG_PLAYER.get(entityName, disguiseName));
+                        LibsMsg.LISTEN_ENTITY_ENTITY_DISG_PLAYER.send(p, entityName, disguiseName);
                     }
                 } else {
                     if (entity instanceof Player) {
-                        p.sendMessage(LibsMsg.LISTEN_ENTITY_PLAYER_DISG_ENTITY.get(entityName, disguiseName));
+                        LibsMsg.LISTEN_ENTITY_PLAYER_DISG_ENTITY.send(p, entityName, disguiseName);
                     } else {
-                        p.sendMessage(LibsMsg.LISTEN_ENTITY_ENTITY_DISG_ENTITY.get(entityName, disguiseName));
+                        LibsMsg.LISTEN_ENTITY_ENTITY_DISG_ENTITY.send(p, entityName, disguiseName);
                     }
                 }
             } else {
                 if (disguise.isPlayerDisguise()) {
                     if (entity instanceof Player) {
-                        p.sendMessage(LibsMsg.LISTEN_ENTITY_PLAYER_DISG_PLAYER_FAIL.get(entityName, disguiseName));
+                        LibsMsg.LISTEN_ENTITY_PLAYER_DISG_PLAYER_FAIL.send(p, entityName, disguiseName);
                     } else {
-                        p.sendMessage(LibsMsg.LISTEN_ENTITY_ENTITY_DISG_PLAYER_FAIL.get(entityName, disguiseName));
+                        LibsMsg.LISTEN_ENTITY_ENTITY_DISG_PLAYER_FAIL.send(p, entityName, disguiseName);
                     }
                 } else {
                     if (entity instanceof Player) {
-                        p.sendMessage(LibsMsg.LISTEN_ENTITY_PLAYER_DISG_ENTITY_FAIL.get(entityName, disguiseName));
+                        LibsMsg.LISTEN_ENTITY_PLAYER_DISG_ENTITY_FAIL.send(p, entityName, disguiseName);
                     } else {
-                        p.sendMessage(LibsMsg.LISTEN_ENTITY_ENTITY_DISG_ENTITY_FAIL.get(entityName, disguiseName));
+                        LibsMsg.LISTEN_ENTITY_ENTITY_DISG_ENTITY_FAIL.send(p, entityName, disguiseName);
                     }
                 }
             }
         }
+    }
+
+    protected String getDisplayName(CommandSender player) {
+        String name = DisguiseConfig.getNameAboveDisguise().replace("%simple%", player.getName());
+
+        if (name.contains("%complex%")) {
+            name = name.replace("%complex%", DisguiseUtilities.getDisplayName(player));
+        }
+
+        return DisguiseUtilities.translateAlternateColorCodes(name);
     }
 }

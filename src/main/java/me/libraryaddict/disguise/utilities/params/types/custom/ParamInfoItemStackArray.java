@@ -1,12 +1,12 @@
 package me.libraryaddict.disguise.utilities.params.types.custom;
 
-import com.google.gson.Gson;
 import me.libraryaddict.disguise.utilities.DisguiseUtilities;
 import org.apache.commons.lang.StringUtils;
 import org.bukkit.inventory.ItemStack;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -38,7 +38,7 @@ public class ParamInfoItemStackArray extends ParamInfoItemStack {
         String lastEntry = split.remove(split.size() - 1);
 
         for (String material : super.getEnums(null)) {
-            if (!split.isEmpty() && !material.toLowerCase().startsWith(lastEntry.toLowerCase()))
+            if (!split.isEmpty() && !material.toLowerCase(Locale.ENGLISH).startsWith(lastEntry.toLowerCase(Locale.ENGLISH)))
                 continue;
 
             toReturn.add(StringUtils.join(split, ",") + (split.isEmpty() ? "" : ",") + material);

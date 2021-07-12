@@ -11,7 +11,6 @@ import me.libraryaddict.disguise.utilities.parser.DisguisePermissions;
 import me.libraryaddict.disguise.utilities.translations.LibsMsg;
 import org.apache.commons.lang.StringUtils;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
@@ -29,7 +28,7 @@ public class DisguiseModifyPlayerCommand extends DisguiseBaseCommand implements 
         DisguisePermissions permissions = getPermissions(sender);
 
         if (!permissions.hasPermissions()) {
-            sender.sendMessage(LibsMsg.NO_PERM.get());
+            LibsMsg.NO_PERM.send(sender);
             return true;
         }
 
@@ -51,7 +50,7 @@ public class DisguiseModifyPlayerCommand extends DisguiseBaseCommand implements 
         }
 
         if (entityTarget == null) {
-            sender.sendMessage(LibsMsg.CANNOT_FIND_PLAYER.get(args[0]));
+            LibsMsg.CANNOT_FIND_PLAYER.send(sender, args[0]);
             return true;
         }
 
@@ -72,14 +71,14 @@ public class DisguiseModifyPlayerCommand extends DisguiseBaseCommand implements 
             disguise = DisguiseAPI.getDisguise(entityTarget);
 
         if (disguise == null) {
-            sender.sendMessage(LibsMsg.DMODPLAYER_NODISGUISE.get(entityTarget.getName()));
+            LibsMsg.DMODPLAYER_NODISGUISE.send(sender, entityTarget.getName());
             return true;
         }
 
         DisguisePerm disguisePerm = new DisguisePerm(disguise.getType());
 
         if (!permissions.isAllowedDisguise(disguisePerm)) {
-            sender.sendMessage(LibsMsg.DMODPLAYER_NOPERM.get());
+            LibsMsg.DMODPLAYER_NOPERM.send(sender);
             return true;
         }
 
@@ -93,17 +92,17 @@ public class DisguiseModifyPlayerCommand extends DisguiseBaseCommand implements 
         }
         catch (DisguiseParseException ex) {
             if (ex.getMessage() != null) {
-                sender.sendMessage(ex.getMessage());
+                DisguiseUtilities.sendMessage(sender, ex.getMessage());
             }
             return true;
         }
 
-        catch (Exception ex) {
+        catch (Throwable ex) {
             ex.printStackTrace();
             return true;
         }
 
-        sender.sendMessage(LibsMsg.DMODPLAYER_MODIFIED.get(entityTarget.getName()));
+        LibsMsg.DMODPLAYER_MODIFIED.send(sender, entityTarget.getName());
 
         return true;
     }
@@ -162,8 +161,8 @@ public class DisguiseModifyPlayerCommand extends DisguiseBaseCommand implements 
     protected void sendCommandUsage(CommandSender sender, DisguisePermissions permissions) {
         ArrayList<String> allowedDisguises = getAllowedDisguises(permissions);
 
-        sender.sendMessage(LibsMsg.DMODPLAYER_HELP1.get());
-        sender.sendMessage(LibsMsg.DMODIFY_HELP3
-                .get(ChatColor.GREEN + StringUtils.join(allowedDisguises, ChatColor.RED + ", " + ChatColor.GREEN)));
+        LibsMsg.DMODPLAYER_HELP1.send(sender);
+        LibsMsg.DMODIFY_HELP3.send(sender,
+                StringUtils.join(allowedDisguises, LibsMsg.CAN_USE_DISGS_SEPERATOR.get()));
     }
 }

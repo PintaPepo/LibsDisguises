@@ -10,7 +10,6 @@ import me.libraryaddict.disguise.utilities.parser.DisguisePerm;
 import me.libraryaddict.disguise.utilities.parser.DisguisePermissions;
 import me.libraryaddict.disguise.utilities.translations.LibsMsg;
 import org.apache.commons.lang.StringUtils;
-import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
@@ -24,14 +23,14 @@ public class DisguiseModifyCommand extends DisguiseBaseCommand implements TabCom
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!(sender instanceof Entity)) {
-            sender.sendMessage(LibsMsg.NO_CONSOLE.get());
+            LibsMsg.NO_CONSOLE.send(sender);
             return true;
         }
 
         DisguisePermissions permissions = getPermissions(sender);
 
         if (!permissions.hasPermissions()) {
-            sender.sendMessage(LibsMsg.NO_PERM.get());
+            LibsMsg.NO_PERM.send(sender);
             return true;
         }
 
@@ -43,14 +42,14 @@ public class DisguiseModifyCommand extends DisguiseBaseCommand implements TabCom
         Disguise disguise = DisguiseAPI.getDisguise((Player) sender, (Entity) sender);
 
         if (disguise == null) {
-            sender.sendMessage(LibsMsg.NOT_DISGUISED.get());
+            LibsMsg.NOT_DISGUISED.send(sender);
             return true;
         }
 
         DisguisePerm disguisePerm = new DisguisePerm(disguise.getType());
 
         if (!permissions.isAllowedDisguise(disguisePerm)) {
-            sender.sendMessage(LibsMsg.DMODIFY_NO_PERM.get());
+            LibsMsg.DMODIFY_NO_PERM.send(sender);
             return true;
         }
 
@@ -64,17 +63,17 @@ public class DisguiseModifyCommand extends DisguiseBaseCommand implements TabCom
         }
         catch (DisguiseParseException ex) {
             if (ex.getMessage() != null) {
-                sender.sendMessage(ex.getMessage());
+                DisguiseUtilities.sendMessage(sender, ex.getMessage());
             }
 
             return true;
         }
-        catch (Exception ex) {
+        catch (Throwable ex) {
             ex.printStackTrace();
             return true;
         }
 
-        sender.sendMessage(LibsMsg.DMODIFY_MODIFIED.get());
+        LibsMsg.DMODIFY_MODIFIED.send(sender);
 
         return true;
     }
@@ -107,9 +106,9 @@ public class DisguiseModifyCommand extends DisguiseBaseCommand implements TabCom
     protected void sendCommandUsage(CommandSender sender, DisguisePermissions permissions) {
         ArrayList<String> allowedDisguises = getAllowedDisguises(permissions);
 
-        sender.sendMessage(LibsMsg.DMODIFY_HELP3.get());
-        sender.sendMessage(LibsMsg.DMODIFY_HELP3.get());
-        sender.sendMessage(LibsMsg.DMODIFY_HELP3
-                .get(ChatColor.GREEN + StringUtils.join(allowedDisguises, ChatColor.RED + ", " + ChatColor.GREEN)));
+        LibsMsg.DMODIFY_HELP1.send(sender);
+        LibsMsg.DMODIFY_HELP2.send(sender);
+        LibsMsg.DMODIFY_HELP3.send(sender,
+                StringUtils.join(allowedDisguises, LibsMsg.CAN_USE_DISGS_SEPERATOR.get()));
     }
 }

@@ -1,5 +1,6 @@
 package me.libraryaddict.disguise.disguisetypes.watchers;
 
+import me.libraryaddict.disguise.DisguiseConfig;
 import me.libraryaddict.disguise.disguisetypes.Disguise;
 import me.libraryaddict.disguise.disguisetypes.MetaIndex;
 import me.libraryaddict.disguise.utilities.parser.RandomDefaultValue;
@@ -12,13 +13,15 @@ import java.util.Random;
 /**
  * Created by libraryaddict on 6/05/2019.
  */
-@NmsAddedIn(val = NmsVersion.v1_14)
+@NmsAddedIn(NmsVersion.v1_14)
 public class PandaWatcher extends AgeableWatcher {
     public PandaWatcher(Disguise disguise) {
         super(disguise);
 
-        setMainGene(Panda.Gene.values()[new Random().nextInt(Panda.Gene.values().length)]);
-        setHiddenGene(Panda.Gene.values()[new Random().nextInt(Panda.Gene.values().length)]);
+        if (DisguiseConfig.isRandomDisguises()) {
+            setMainGene(Panda.Gene.values()[new Random().nextInt(Panda.Gene.values().length)]);
+            setHiddenGene(Panda.Gene.values()[new Random().nextInt(Panda.Gene.values().length)]);
+        }
     }
 
     public Panda.Gene getMainGene() {

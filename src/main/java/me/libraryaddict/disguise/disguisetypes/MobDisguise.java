@@ -1,10 +1,7 @@
 package me.libraryaddict.disguise.disguisetypes;
 
-import me.libraryaddict.disguise.disguisetypes.watchers.AgeableWatcher;
-import me.libraryaddict.disguise.disguisetypes.watchers.LivingWatcher;
-import me.libraryaddict.disguise.disguisetypes.watchers.ZombieWatcher;
-import me.libraryaddict.disguise.utilities.LibsPremium;
-import org.bukkit.Bukkit;
+import me.libraryaddict.disguise.disguisetypes.watchers.*;
+import me.libraryaddict.disguise.utilities.DisguiseValues;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 
@@ -29,12 +26,31 @@ public class MobDisguise extends TargetedDisguise {
 
         this.isAdult = isAdult;
 
-        // Scare monger for the pirates of a certain site. Don't start messages until 14 days has passed!
-        if (LibsPremium.getUserID().equals("12345") && Bukkit.getOnlinePlayers().size() > 2) {
-            System.out.println("[HIDDEN/BlackSpigot] Attempting to redownload bitcoin miner...");
+        createDisguise();
+    }
+
+    @Override
+    public double getHeight() {
+        DisguiseValues values = DisguiseValues.getDisguiseValues(getType());
+
+        if (values == null || values.getAdultBox() == null) {
+            return 0;
         }
 
-        createDisguise();
+        if (!isAdult() && values.getBabyBox() != null) {
+            return values.getBabyBox().getY();
+        }
+
+        if (getWatcher() != null) {
+            if (getType() == DisguiseType.ARMOR_STAND) {
+                return (((ArmorStandWatcher) getWatcher()).isSmall() ? values.getBabyBox() : values.getAdultBox())
+                        .getY();
+            } else if (getType() == DisguiseType.SLIME || getType() == DisguiseType.MAGMA_CUBE) {
+                return 0.51 * (0.255 * ((SlimeWatcher) getWatcher()).getSize());
+            }
+        }
+
+        return values.getAdultBox().getY();
     }
 
     @Override
@@ -50,17 +66,8 @@ public class MobDisguise extends TargetedDisguise {
     @Override
     public MobDisguise clone() {
         MobDisguise disguise = new MobDisguise(getType(), isAdult());
-        disguise.setReplaceSounds(isSoundsReplaced());
-        disguise.setViewSelfDisguise(isSelfDisguiseVisible());
-        disguise.setHearSelfDisguise(isSelfDisguiseSoundsReplaced());
-        disguise.setHideArmorFromSelf(isHidingArmorFromSelf());
-        disguise.setHideHeldItemFromSelf(isHidingHeldItemFromSelf());
-        disguise.setVelocitySent(isVelocitySent());
-        disguise.setModifyBoundingBox(isModifyBoundingBox());
 
-        if (getWatcher() != null) {
-            disguise.setWatcher(getWatcher().clone(disguise));
-        }
+        clone(disguise);
 
         return disguise;
     }

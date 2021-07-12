@@ -13,10 +13,7 @@ import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 
 public class UndisguisePlayerCommand implements CommandExecutor, TabCompleter {
     protected ArrayList<String> filterTabs(ArrayList<String> list, String[] origArgs) {
@@ -24,12 +21,12 @@ public class UndisguisePlayerCommand implements CommandExecutor, TabCompleter {
             return list;
 
         Iterator<String> itel = list.iterator();
-        String label = origArgs[origArgs.length - 1].toLowerCase();
+        String label = origArgs[origArgs.length - 1].toLowerCase(Locale.ENGLISH);
 
         while (itel.hasNext()) {
             String name = itel.next();
 
-            if (name.toLowerCase().startsWith(label))
+            if (name.toLowerCase(Locale.ENGLISH).startsWith(label))
                 continue;
 
             itel.remove();
@@ -57,17 +54,17 @@ public class UndisguisePlayerCommand implements CommandExecutor, TabCompleter {
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (sender instanceof Player && !sender.isOp() &&
                 (!LibsPremium.isPremium() || LibsPremium.getPaidInformation() == LibsPremium.getPluginInformation())) {
-            sender.sendMessage(ChatColor.RED + "Please purchase Lib's Disguises to enable player commands");
+            sender.sendMessage(ChatColor.RED + "This is the free version of Lib's Disguises, player commands are limited to console and Operators only! Purchase the plugin for non-admin usage!");
             return true;
         }
 
         if (!sender.hasPermission("libsdisguises.undisguiseplayer")) {
-            sender.sendMessage(LibsMsg.NO_PERM.get());
+            LibsMsg.NO_PERM.send(sender);
             return true;
         }
 
         if (args.length == 0) {
-            sender.sendMessage(LibsMsg.UNDISG_PLAYER_HELP.get());
+            LibsMsg.UNDISG_PLAYER_HELP.send(sender);
             return true;
         }
 
@@ -84,17 +81,19 @@ public class UndisguisePlayerCommand implements CommandExecutor, TabCompleter {
         }
 
         if (entityTarget == null) {
-            sender.sendMessage(LibsMsg.CANNOT_FIND_PLAYER.get(args[0]));
+            LibsMsg.CANNOT_FIND_PLAYER.send(sender, args[0]);
             return true;
         }
 
         if (DisguiseAPI.isDisguised(entityTarget)) {
-            DisguiseAPI.undisguiseToAll(entityTarget);
-            sender.sendMessage(LibsMsg.UNDISG_PLAYER.get(entityTarget instanceof Player ? entityTarget.getName() :
-                    DisguiseType.getType(entityTarget).toReadable()));
+            DisguiseAPI.undisguiseToAll(sender, entityTarget);
+            LibsMsg.UNDISG_PLAYER.send(sender,
+                    entityTarget instanceof Player ? entityTarget.getName() :
+                            DisguiseType.getType(entityTarget).toReadable());
         } else {
-            sender.sendMessage(LibsMsg.UNDISG_PLAYER_FAIL.get(entityTarget instanceof Player ? entityTarget.getName() :
-                    DisguiseType.getType(entityTarget).toReadable()));
+            LibsMsg.UNDISG_PLAYER_FAIL.send(sender,
+                    entityTarget instanceof Player ? entityTarget.getName() :
+                            DisguiseType.getType(entityTarget).toReadable());
         }
 
         return true;

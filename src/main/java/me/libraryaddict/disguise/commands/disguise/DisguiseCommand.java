@@ -11,7 +11,6 @@ import me.libraryaddict.disguise.utilities.parser.DisguiseParser;
 import me.libraryaddict.disguise.utilities.parser.DisguisePermissions;
 import me.libraryaddict.disguise.utilities.translations.LibsMsg;
 import org.apache.commons.lang.StringUtils;
-import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
@@ -29,7 +28,7 @@ public class DisguiseCommand extends DisguiseBaseCommand implements TabCompleter
         }
 
         if (!(sender instanceof Entity)) {
-            sender.sendMessage(LibsMsg.NO_CONSOLE.get());
+            LibsMsg.NO_CONSOLE.send(sender);
             return true;
         }
 
@@ -38,20 +37,22 @@ public class DisguiseCommand extends DisguiseBaseCommand implements TabCompleter
             return true;
         }
 
+        if (hasHitRateLimit(sender)) {
+            return true;
+        }
+
         Disguise disguise;
 
         try {
-            disguise = DisguiseParser.parseDisguise(sender, (Entity) sender, getPermNode(),
-                    DisguiseUtilities.split(StringUtils.join(args, " ")), getPermissions(sender));
-        }
-        catch (DisguiseParseException ex) {
+            disguise = DisguiseParser
+                    .parseDisguise(sender, (Entity) sender, getPermNode(), DisguiseUtilities.split(StringUtils.join(args, " ")), getPermissions(sender));
+        } catch (DisguiseParseException ex) {
             if (ex.getMessage() != null) {
-                sender.sendMessage(ex.getMessage());
+                DisguiseUtilities.sendMessage(sender, ex.getMessage());
             }
 
             return true;
-        }
-        catch (Exception ex) {
+        } catch (Throwable ex) {
             ex.printStackTrace();
             return true;
         }
@@ -70,17 +71,21 @@ public class DisguiseCommand extends DisguiseBaseCommand implements TabCompleter
 
         if (!setViewDisguise(args)) {
             // They prefer to have the opposite of whatever the view disguises option is
-            if (DisguiseAPI.hasSelfDisguisePreference(disguise.getEntity()) &&
-                    disguise.isSelfDisguiseVisible() == DisguiseConfig.isViewDisguises())
+            if (DisguiseAPI.hasSelfDisguisePreference(disguise.getEntity()) && disguise.isSelfDisguiseVisible() == DisguiseConfig.isViewSelfDisguisesDefault()) {
                 disguise.setViewSelfDisguise(!disguise.isSelfDisguiseVisible());
+            }
         }
 
-        disguise.startDisguise();
+        if (!DisguiseAPI.isActionBarShown(disguise.getEntity())) {
+            disguise.setNotifyBar(DisguiseConfig.NotifyBar.NONE);
+        }
+
+        disguise.startDisguise(sender);
 
         if (disguise.isDisguiseInUse()) {
-            sender.sendMessage(LibsMsg.DISGUISED.get(disguise.getType().toReadable()));
+            LibsMsg.DISGUISED.send(sender, disguise.getDisguiseName());
         } else {
-            sender.sendMessage(LibsMsg.FAILED_DISGIUSE.get(disguise.getType().toReadable()));
+            LibsMsg.FAILED_DISGIUSE.send(sender, disguise.getDisguiseName());
         }
 
         return true;
@@ -88,8 +93,9 @@ public class DisguiseCommand extends DisguiseBaseCommand implements TabCompleter
 
     private boolean setViewDisguise(String[] strings) {
         for (String string : strings) {
-            if (!string.equalsIgnoreCase("setSelfDisguiseVisible"))
+            if (!string.equalsIgnoreCase("setSelfDisguiseVisible")) {
                 continue;
+            }
 
             return true;
         }
@@ -113,18 +119,23 @@ public class DisguiseCommand extends DisguiseBaseCommand implements TabCompleter
     @Override
     protected void sendCommandUsage(CommandSender sender, DisguisePermissions permissions) {
         ArrayList<String> allowedDisguises = getAllowedDisguises(permissions);
-        sender.sendMessage(LibsMsg.DISG_HELP1.get());
-        sender.sendMessage(LibsMsg.CAN_USE_DISGS
-                .get(ChatColor.GREEN + StringUtils.join(allowedDisguises, ChatColor.RED + ", " + ChatColor.GREEN)));
 
-        if (allowedDisguises.contains("player")) {
-            sender.sendMessage(LibsMsg.DISG_HELP2.get());
+        if (allowedDisguises.isEmpty()) {
+            LibsMsg.NO_PERM.send(sender);
+            return;
         }
 
-        sender.sendMessage(LibsMsg.DISG_HELP3.get());
+        LibsMsg.DISG_HELP1.send(sender);
+        LibsMsg.CAN_USE_DISGS.send(sender, StringUtils.join(allowedDisguises, LibsMsg.CAN_USE_DISGS_SEPERATOR.get()));
+
+        if (allowedDisguises.contains("player")) {
+            LibsMsg.DISG_HELP2.send(sender);
+        }
+
+        LibsMsg.DISG_HELP3.send(sender);
 
         if (allowedDisguises.contains("dropped_item") || allowedDisguises.contains("falling_block")) {
-            sender.sendMessage(LibsMsg.DISG_HELP4.get());
+            LibsMsg.DISG_HELP4.send(sender);
         }
     }
 }

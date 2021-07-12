@@ -1,5 +1,6 @@
 package me.libraryaddict.disguise.disguisetypes.watchers;
 
+import me.libraryaddict.disguise.DisguiseConfig;
 import me.libraryaddict.disguise.disguisetypes.Disguise;
 import me.libraryaddict.disguise.disguisetypes.MetaIndex;
 import me.libraryaddict.disguise.utilities.parser.RandomDefaultValue;
@@ -12,12 +13,14 @@ import java.util.Random;
 /**
  * Created by libraryaddict on 6/05/2019.
  */
-@NmsAddedIn(val = NmsVersion.v1_14)
+@NmsAddedIn(NmsVersion.v1_14)
 public class FoxWatcher extends AgeableWatcher {
     public FoxWatcher(Disguise disguise) {
         super(disguise);
 
-        setType(Fox.Type.values()[new Random().nextInt(Fox.Type.values().length)]);
+        if (DisguiseConfig.isRandomDisguises()) {
+            setType(Fox.Type.values()[new Random().nextInt(Fox.Type.values().length)]);
+        }
     }
 
     public boolean isSitting() {
