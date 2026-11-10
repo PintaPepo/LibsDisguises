@@ -1,0 +1,181 @@
+package me.libraryaddict.disguise.utilities.reflection;
+
+import com.github.retrooper.packetevents.protocol.mapper.MappedEntity;
+import com.github.retrooper.packetevents.protocol.player.UserProfile;
+import com.github.retrooper.packetevents.util.mappings.VersionedRegistry;
+import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.ProfileLookupCallback;
+import io.netty.buffer.ByteBuf;
+import me.libraryaddict.disguise.utilities.DisguiseValues;
+import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.World;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.scoreboard.Objective;
+import org.bukkit.scoreboard.Score;
+import org.bukkit.scoreboard.Scoreboard;
+import org.bukkit.util.Vector;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+public abstract class ReflectionManagerAbstract {
+    public abstract boolean hasInvul(Entity entity);
+
+    public abstract int getIncrementedStateId(Player player);
+
+    public abstract int getNewEntityId();
+
+    public abstract int getNewEntityId(boolean increment);
+
+    public abstract Object getPlayerConnectionOrPlayer(Player player);
+
+    public Object createEntityInstance(EntityType entityType, String entityName) {
+        return createEntityInstance(entityName);
+    }
+
+    protected abstract Object createEntityInstance(String entityName);
+
+    public abstract Object getPlayerFromPlayerConnection(Object nmsEntity);
+
+    public abstract Entity getBukkitEntity(Object nmsEntity);
+
+    public abstract ItemStack getBukkitItem(Object nmsItem);
+
+    public abstract ItemStack getCraftItem(ItemStack bukkitItem);
+
+    public abstract Object getMinecraftServer();
+
+    public abstract Object getNmsEntity(Entity entity);
+
+    public abstract double getPing(Player player);
+
+    public abstract Object getMinecraftSessionService();
+
+    public abstract Float getSoundModifier(Object entity);
+
+    public abstract DisguiseValues constructValues(Object nmsEntity);
+
+    public abstract void injectCallback(String playername, ProfileLookupCallback callback);
+
+    public abstract void setBoundingBox(Entity entity, double x, double y, double z);
+
+    public final ByteBuf getDataWatcherValues(Entity entity) {
+        return getDataWatcherValues(getNmsEntity(entity));
+    }
+
+    public abstract ByteBuf getDataWatcherValues(Object entity);
+
+    public abstract Material getMaterial(String name);
+
+    public abstract String getItemName(Material material);
+
+    public abstract Object createMinecraftKey(String name);
+
+    public abstract Object getEntityType(EntityType entityType);
+
+    public abstract Object registerEntityType(NamespacedKey key);
+
+    public abstract int getEntityTypeId(Object entityTypes);
+
+    public abstract int getEntityTypeId(EntityType entityType);
+
+    public abstract Object getEntityType(NamespacedKey name);
+
+    public abstract int getCombinedIdByBlockData(BlockData data);
+
+    public abstract int getCombinedIdByItemStack(ItemStack itemStack);
+
+    public abstract BlockData getBlockDataByCombinedId(int id);
+
+    public abstract ItemStack getItemStackByCombinedId(int id);
+
+    public abstract Object getWorldServer(World w);
+
+    public abstract ItemMeta getDeserializedItemMeta(Map<String, Object> meta);
+
+    public abstract GameProfile getProfile(Player player);
+
+    static UserProfile getUserProfile(UUID uuid, String playerName) {
+        return new UserProfile(uuid, playerName == null || playerName.length() < 17 ? playerName : playerName.substring(0, 16));
+    }
+
+    public <T> T getTypeFromInt(Class<T> typeClass, int typeId) {
+        if (typeClass.isEnum()) {
+            return typeClass.getEnumConstants()[typeId];
+        }
+
+        throw new IllegalStateException("This method should have been overwritten by an extending class");
+    }
+
+    public <T> int getIntFromType(T type) {
+        if (type instanceof Enum) {
+            return ((Enum) type).ordinal();
+        }
+
+        throw new IllegalStateException("This method should have been overwritten by an extending class");
+    }
+
+    public String getDataAsString(ItemStack itemStack) {
+        return itemStack.hasItemMeta() ? itemStack.getItemMeta().getAsString() : null;
+    }
+
+    public abstract Object getEntityTracker(Entity target) throws Exception;
+
+    @Deprecated
+    public Object getEntityTrackerEntry(Entity target, Object entityTracker) throws Exception {
+        return getTrackerEntryFromTracker(entityTracker);
+    }
+
+    protected abstract Object getTrackerEntryFromTracker(Object tracker) throws Exception;
+
+    public abstract Set getTrackedEntities(Object trackedEntity);
+
+    public abstract void addEntityTracker(Object trackedEntity, Object serverPlayer);
+
+    public abstract void clearEntityTracker(Object trackedEntity, Object serverPlayer);
+
+    public List<ByteBuf> getRegistryPacketdata() {
+        // This is only implemented in 1.20.1+ servers
+        return new ArrayList<>();
+    }
+
+    public boolean setScore(Scoreboard scoreboard, String criteria, String name, int score) {
+        Set<Objective> objectives = scoreboard.getObjectivesByCriteria(criteria);
+
+        for (Objective objective : objectives) {
+            Score s = objective.getScore(name);
+
+            s.setScore(score);
+        }
+
+        return !objectives.isEmpty();
+    }
+
+    /**
+     * Retrieves variant information, using packtevents registry as identifier. Mainly because paper & spigot do not implement the same apis
+     */
+    public String getVariant(Entity entity, VersionedRegistry<? extends MappedEntity> registry) {
+        return null;
+    }
+
+    /**
+     * Set the impulse flag on the entity so that the tracker updates it. Meant for use with entities that need more frequent movements
+     */
+    public abstract void setImpulse(Entity entity);
+
+    /**
+     * The position the server places this passenger at on its vehicle
+     */
+    public Vector getRidingPosition(Entity passenger) {
+        return passenger.getLocation().toVector();
+    }
+}

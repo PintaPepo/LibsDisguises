@@ -1,0 +1,405 @@
+package me.libraryaddict.disguise.disguisetypes;
+
+import com.github.retrooper.packetevents.protocol.attribute.Attributes;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerUpdateAttributes;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.RequiredArgsConstructor;
+import lombok.Setter;
+import me.libraryaddict.disguise.DisguiseAPI;
+import me.libraryaddict.disguise.DisguiseConfig;
+import me.libraryaddict.disguise.LibsDisguises;
+import me.libraryaddict.disguise.utilities.DisguiseUtilities;
+import me.libraryaddict.disguise.utilities.movements.InteractiveBoundingBox;
+import me.libraryaddict.disguise.utilities.movements.MovementTracker;
+import me.libraryaddict.disguise.utilities.reflection.NmsVersion;
+import me.libraryaddict.disguise.utilities.scaling.DisguiseScaling;
+import me.libraryaddict.disguise.utilities.wrapped.IWrappedEntity;
+import me.libraryaddict.disguise.utilities.wrapped.IWrappedPlayer;
+import me.libraryaddict.disguise.utilities.wrapped.WrappedManager;
+import org.bukkit.NamespacedKey;
+import org.bukkit.attribute.AttributeInstance;
+import org.bukkit.attribute.AttributeModifier;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.EquipmentSlotGroup;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/**
+ * Not intended to be used by external plugins
+ */
+@RequiredArgsConstructor
+public class DisguiseInternals<D extends Disguise> implements DisguiseScaling.DisguiseScalingInternals {
+    @Getter(AccessLevel.PRIVATE)
+    private final D disguise;
+    /**
+     * The entity scale when Libs Disguises is not excluded from attributes
+     */
+    private volatile double entityScaleWithLibsDisguises = 1;
+    /**
+     * The entity scale when Libs Disguises is excluded from attributes
+     */
+    @Getter
+    private volatile double playerScaleWithoutLibsDisguises = 1;
+    /**
+     * The entity scale that was last sent in a packet, used to try avoid wasting our time
+     */
+    @Getter
+    @Setter
+    private volatile double entityScaleLastSentViaPackets = 1;
+    /**
+     * The biggest we'll allow the self disguise to be scaled up to, including disguise applied scale
+     */
+    @Setter
+    @Getter
+    private volatile double selfDisguiseTallScaleMax = 1;
+    @Getter
+    private final NamespacedKey bossBar = new NamespacedKey("libsdisguises", UUID.randomUUID().toString());
+    @Getter
+    private final DisguiseScaling scaling;
+    private final AtomicBoolean refreshingScaling = new AtomicBoolean(false);
+    @Getter
+    private transient DisguiseRunnable runnable;
+    private final Set<UUID> seesDisguise = ConcurrentHashMap.newKeySet();
+    @Getter
+    private final List<MovementTracker> trackers = new ArrayList<>();
+    @Getter
+    private InteractiveBoundingBox interactiveBoundingBox;
+    @Getter
+    private final DisguiseConfig.PlayerNameType nameDisplayType = DisguiseConfig.getPlayerNameType();
+    @Getter
+    @Setter
+    private IWrappedEntity<?> entity;
+    /**
+     * This reflects the scale last seen by the players, this does not reflect the actual scale of the entity, but what they see
+     */
+    private final Map<UUID, Double> entityScaleSent = new ConcurrentHashMap<>();
+
+    public void clearRememberedScaling() {
+        entityScaleSent.clear();
+    }
+
+    public void setEntityScale(UUID playerUUID, double scale) {
+        entityScaleSent.put(playerUUID, scale);
+    }
+
+    public Double getLastTransmittedScale(UUID playerUUID) {
+        return entityScaleSent.get(playerUUID);
+    }
+
+    public void removeEntityScale(UUID playerUUID) {
+        entityScaleSent.remove(playerUUID);
+    }
+
+    public DisguiseInternals(D disguise) {
+        this.disguise = disguise;
+        scaling = new DisguiseScaling(this);
+    }
+
+    public void setInteractiveBoundingBox(InteractiveBoundingBox boundingBox) {
+        if (getInteractiveBoundingBox() != null) {
+            trackers.remove(getInteractiveBoundingBox());
+
+            if (getDisguise().isDisguiseInUse()) {
+                getInteractiveBoundingBox().onStop(false);
+
+                for (IWrappedPlayer player : DisguiseUtilities.getTrackingPlayers(getDisguise())) {
+                    getInteractiveBoundingBox().onDespawn(player, false);
+                }
+            }
+        }
+
+        interactiveBoundingBox = boundingBox;
+
+        if (boundingBox == null) {
+            return;
+        }
+
+        boundingBox.setDisguise(getDisguise());
+        trackers.add(boundingBox);
+
+        if (!getDisguise().isDisguiseInUse()) {
+            return;
+        }
+
+        boundingBox.onStart(false);
+    }
+
+    /**
+     * If the respective player has been sent the Spawn packets
+     *
+     * @param player
+     * @return
+     */
+    public synchronized boolean shouldAvoidSendingPackets(IWrappedPlayer player) {
+        return shouldAvoidSendingPackets(player.getUniqueId());
+    }
+
+    public synchronized boolean shouldAvoidSendingPackets(Player player) {
+        return shouldAvoidSendingPackets(player.getUniqueId());
+    }
+
+    public synchronized boolean shouldAvoidSendingPackets(UUID player) {
+        return !seesDisguise.contains(player);
+    }
+
+    public synchronized void addSeen(Player player, boolean isSpawnElseRemove) {
+        addSeen(player.getUniqueId(), isSpawnElseRemove);
+    }
+
+    public synchronized void addSeen(UUID uuid, boolean isSpawnElseRemove) {
+        // We track it here because the "seen state" is per disguise and we sometimes want to track it on an object level.
+        if (isSpawnElseRemove) {
+            seesDisguise.add(uuid);
+        } else {
+            seesDisguise.remove(uuid);
+            removeEntityScale(uuid);
+        }
+
+        // We always track it as transitionary because if it's being removed, then we definitely are not sending metadata
+        // If it's being added, then we're also not sending metadata that's untransformed
+        DisguiseUtilities.getSeenTracker().setDisguiseBeingChangedOver(uuid, getEntity().getEntityId());
+    }
+
+    protected void onDisguiseStart() {
+        if (runnable != null && runnable.isInUse()) {
+            runnable.stop();
+        }
+
+        // Clear the seen
+        seesDisguise.clear();
+        clearRememberedScaling();
+
+        // A scheduler to clean up any unused disguises.
+        runnable = new DisguiseRunnable(getDisguise());
+        runnable.start();
+
+        for (MovementTracker tracker : trackers) {
+            tracker.onStart(true);
+
+            for (int entityId : tracker.getOwnedEntityIds()) {
+                DisguiseUtilities.getRemappedEntityIds().put(entityId, getEntity().getEntityId());
+            }
+        }
+    }
+
+    protected void onDisguiseStop() {
+        for (MovementTracker tracker : trackers) {
+            tracker.onStop(true);
+
+            for (IWrappedPlayer player : DisguiseUtilities.getTrackingPlayers(getDisguise())) {
+                tracker.onDespawn(player, false);
+            }
+
+            for (int entityId : tracker.getOwnedEntityIds()) {
+                DisguiseUtilities.getRemappedEntityIds().remove(entityId);
+            }
+        }
+
+        Entity disguised = getDisguise().getEntity();
+
+        // Mark this as in limbo for all the "currently seeing" entities
+        if (disguised != null) {
+            for (UUID sees : seesDisguise) {
+                DisguiseUtilities.getSeenTracker().setDisguiseBeingChangedOver(sees, getEntity().getEntityId());
+            }
+        }
+
+        // Clear the seen
+        seesDisguise.clear();
+        clearRememberedScaling();
+
+        if (runnable == null) {
+            return;
+        }
+
+        runnable.stop();
+        runnable = null;
+    }
+
+    /**
+     * Counterpart to removeDisguise() for when the entity's thread is practically inaccessible
+     *
+     * @return true if disguise was in use, and discarded
+     */
+    public boolean discardDisguise() {
+        if (!getDisguise().isDisguiseInUse()) {
+            return false;
+        }
+
+        // Mark this as in limbo for all the "currently seeing" entities
+        for (UUID sees : seesDisguise) {
+            DisguiseUtilities.getSeenTracker().setDisguiseBeingChangedOver(sees, getEntity().getEntityId());
+        }
+
+        // Clear the seen
+        seesDisguise.clear();
+        clearRememberedScaling();
+
+        if (runnable != null) {
+            runnable.stop();
+            runnable = null;
+        }
+
+        boolean disguiseWasActive = DisguiseUtilities.removeDisguise((TargetedDisguise) getDisguise());
+        getDisguise().setDisguiseInUse(false);
+
+        WrappedManager.scheduleCleanup(getDisguise().getEntity());
+
+        return disguiseWasActive;
+    }
+
+    private void updateEntityScaleWithoutLibsDisguises() {
+        double[] scales = DisguiseUtilities.getEntityScales(getEntity().getEntity());
+        boolean changed = false;
+
+        if (entityScaleWithLibsDisguises != scales[0]) {
+            entityScaleWithLibsDisguises = scales[0];
+            changed = true;
+        }
+
+        if (playerScaleWithoutLibsDisguises != scales[1]) {
+            playerScaleWithoutLibsDisguises = scales[1];
+            changed = true;
+        }
+
+        if (changed) {
+            getScaling().adjustScaling();
+        }
+    }
+
+    public void updateEntityScale(double scaleInPacket) {
+        if (entityScaleLastSentViaPackets == scaleInPacket) {
+            return;
+        }
+
+        entityScaleLastSentViaPackets = scaleInPacket;
+
+        // If disguise can't be scaled
+        // If a scale cannot be applied to the entity (or it is null)
+        if (disguise.isMiscDisguise() || !(disguise.getEntity() instanceof LivingEntity)) {
+            return;
+        }
+
+        refreshScale();
+    }
+
+    public void refreshScale() {
+        // If value was already true, return. Otherwise, set to true
+        if (refreshingScaling.getAndSet(true)) {
+            return;
+        }
+
+        if (!LibsDisguises.getScheduler().isOwnedByCurrentRegion(disguise.getEntity())) {
+            LibsDisguises.getScheduler().entity(disguise.getEntity()).run(() -> {
+                refreshingScaling.set(false);
+                refreshScale();
+            });
+            return;
+        }
+
+        refreshingScaling.set(false);
+
+        if (!disguise.isDisguiseInUse()) {
+            return;
+        }
+
+        updateEntityScaleWithoutLibsDisguises();
+    }
+
+    @Override
+    public void sendTinyFigureScale(double tinyFigureScale) {
+        // The scale of the self disguise, not the player
+        WrapperPlayServerUpdateAttributes.Property property =
+            new WrapperPlayServerUpdateAttributes.Property(Attributes.GENERIC_SCALE, tinyFigureScale, new ArrayList<>());
+
+        WrapperPlayServerUpdateAttributes packet =
+            new WrapperPlayServerUpdateAttributes(DisguiseAPI.getSelfDisguiseId(), Collections.singletonList(property));
+
+        getEntity().sendPacket(packet);
+    }
+
+    @Override
+    public void setPlayerScale(double personalPlayerScaleAttribute) {
+        // Now we figure out the scale we need to have the player at the same eye level of the disguise
+        AttributeInstance attribute = ((Player) getDisguise().getEntity()).getAttribute(DisguiseUtilities.getScaleAttribute());
+        AttributeModifier modifier =
+            attribute.getModifiers().stream().filter(a -> a.getKey().equals(DisguiseUtilities.getSelfDisguiseScaleNamespace())).findAny()
+                .orElse(null);
+
+        // Disabled or not allowed or doesn't need to scale
+        if (!isScalePlayerToDisguise() || personalPlayerScaleAttribute == 1 || getDisguise().isPlayerDisguise()) {
+            if (modifier != null) {
+                attribute.removeModifier(modifier);
+            }
+
+            return;
+        }
+
+        // Subtract 1, as 1 is added internally
+        personalPlayerScaleAttribute -= 1;
+
+        if (modifier != null) {
+            // Nothing changed, don't change anything
+            if (modifier.getAmount() == personalPlayerScaleAttribute &&
+                modifier.getOperation() == AttributeModifier.Operation.MULTIPLY_SCALAR_1) {
+                return;
+            }
+
+            attribute.removeModifier(modifier);
+        }
+
+        AttributeModifier newModifier = getAttributeModifier(personalPlayerScaleAttribute);
+
+        attribute.addModifier(newModifier);
+    }
+
+    /**
+     * If the disguise is in use, the disguised entity is a player and the disguised entity can see this disgiuse
+     */
+    @Override
+    public boolean isScalingRelevant() {
+        return getDisguise().isDisguiseInUse() && getDisguise().getEntity() instanceof Player &&
+            ((TargetedDisguise) getDisguise()).canSee((Player) getDisguise().getEntity());
+    }
+
+    @Override
+    public boolean isTinyFigureScaleable() {
+        return getDisguise().canScaleDisguise() && getDisguise().isSelfDisguiseVisible() && getDisguise().isTallSelfDisguisesScaling();
+    }
+
+    @Override
+    public boolean isScalePlayerToDisguise() {
+        return getDisguise().isScalePlayerToDisguise();
+    }
+
+    private static AttributeModifier getAttributeModifier(double personalPlayerScaleAttribute) {
+        if (!NmsVersion.v1_21_R1.isSupported()) {
+            return new AttributeModifier(DisguiseUtilities.getSelfDisguiseScaleUUID(),
+                DisguiseUtilities.getSelfDisguiseScaleNamespace().toString(), personalPlayerScaleAttribute,
+                AttributeModifier.Operation.MULTIPLY_SCALAR_1, EquipmentSlotGroup.ANY);
+        }
+
+        return new AttributeModifier(DisguiseUtilities.getSelfDisguiseScaleNamespace(), personalPlayerScaleAttribute,
+            AttributeModifier.Operation.MULTIPLY_SCALAR_1, EquipmentSlotGroup.ANY);
+    }
+
+    @Override
+    public double getUnscaledHeight() {
+        return getDisguise().getHeight();
+    }
+
+    @Override
+    public double getDisguiseScale() {
+        return getDisguise().getDisguiseScale();
+    }
+}

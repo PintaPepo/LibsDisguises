@@ -1,0 +1,24 @@
+package me.libraryaddict.disguise.utilities.packets.packethandlers;
+
+import com.github.retrooper.packetevents.protocol.packettype.PacketType;
+import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
+import me.libraryaddict.disguise.disguisetypes.Disguise;
+import me.libraryaddict.disguise.utilities.packets.IPacketHandler;
+import me.libraryaddict.disguise.utilities.packets.LibsPackets;
+import me.libraryaddict.disguise.utilities.wrapped.IWrappedEntity;
+import me.libraryaddict.disguise.utilities.wrapped.IWrappedPlayer;
+
+public class PacketHandlerCollectItem implements IPacketHandler {
+    @Override
+    public PacketTypeCommon[] getHandledPackets() {
+        return new PacketTypeCommon[]{PacketType.Play.Server.COLLECT_ITEM};
+    }
+
+    @Override
+    public void handle(Disguise disguise, LibsPackets packets, IWrappedPlayer observer, IWrappedEntity entity) {
+        // Else if the disguise is attempting to send players a forbidden packet
+        if (disguise.getType().isMisc()) {
+            packets.clear();
+        }
+    }
+}

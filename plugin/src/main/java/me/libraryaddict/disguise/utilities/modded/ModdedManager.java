@@ -1,0 +1,206 @@
+package me.libraryaddict.disguise.utilities.modded;
+
+import com.github.retrooper.packetevents.netty.buffer.ByteBufHelper;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
+import lombok.Getter;
+import lombok.SneakyThrows;
+import me.libraryaddict.disguise.DisguiseConfig;
+import me.libraryaddict.disguise.LibsDisguises;
+import me.libraryaddict.disguise.disguisetypes.DisguiseType;
+import me.libraryaddict.disguise.utilities.listeners.ModdedListener;
+import me.libraryaddict.disguise.utilities.parser.DisguisePerm;
+import me.libraryaddict.disguise.utilities.reflection.NmsVersion;
+import me.libraryaddict.disguise.utilities.reflection.ReflectionManager;
+import org.bukkit.Bukkit;
+import org.bukkit.NamespacedKey;
+import org.bukkit.entity.Player;
+import org.bukkit.metadata.FixedMetadataValue;
+
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+
+public class ModdedManager {
+    @Getter
+    private static final HashMap<NamespacedKey, ModdedEntity> entities = new HashMap<>();
+    @Getter
+    private static byte[] fmlHandshake;
+    @Getter
+    private static byte[] fmlRegistries;
+    @Getter
+    private static final Cache<String, ArrayList<String>> forgeMods =
+        CacheBuilder.newBuilder().expireAfterWrite(1, TimeUnit.MINUTES).build();
+
+    @SneakyThrows
+    public ModdedManager(ArrayList<String> channels) {
+        if (getEntities().isEmpty()) {
+            return;
+        }
+
+        // TODO Implement newer forge methods of registering a modded server
+        if (NmsVersion.v1_20_R2.isSupported()) {
+            return;
+        }
+
+        if (fmlRegistries == null && DisguiseConfig.isLoginPayloadPackets()) {
+            //PacketEvents.getAPI().getEventManager().registerListener(new PacketListenerModdedClient());
+            Bukkit.getPluginManager().registerEvents(new ModdedListener(), LibsDisguises.getInstance());
+        }
+
+        createPayloads(channels);
+    }
+
+    private void writeString(Object buff, String string) {
+        ByteBufHelper.writeVarInt(buff, string.length());
+        ByteBufHelper.writeBytes(buff, string.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private void createPayloads(ArrayList<String> channels) throws IOException {
+        try (ByteArrayOutputStream stream = new ByteArrayOutputStream(); DataOutputStream output = new DataOutputStream(stream)) {
+
+            // Packet id 1
+            ByteBufHelper.writeVarInt(output, 1);
+            // We have no mods to declare
+            ByteBufHelper.writeVarInt(output, 0);
+
+            // We want to declare some channels
+            ByteBufHelper.writeVarInt(output, channels.size());
+
+            for (String channel : channels) {
+                // Here's the channel name
+                writeString(output, channel.substring(0, channel.indexOf("|")));
+                // Here's the channel version, yes <Client Mod> we're using your version!
+                writeString(output, channel.substring(channel.indexOf("|") + 1));
+            }
+
+            // We want to declare some entities. Wait. No we don't?
+            // Weird, am I missing something..
+            ByteBufHelper.writeVarInt(output, 0);
+
+            // Only this one thx
+            // s.serializeString(output, "minecraft:entity_type");
+
+            fmlHandshake = stream.toByteArray();
+        }
+
+        try (ByteArrayOutputStream stream = new ByteArrayOutputStream(); DataOutputStream output = new DataOutputStream(stream)) {
+            // Packet id 3
+            ByteBufHelper.writeVarInt(output, 3);
+
+            // What registry we're modifying
+            writeString(output, "minecraft:entity_type");
+            // Yes... We're doing custom data
+            ByteBufHelper.writeVarInt(output, 1);
+
+            // We have this many entities
+            ByteBufHelper.writeVarInt(output, entities.size());
+
+            // Write the entity names and ids
+            for (Map.Entry<NamespacedKey, ModdedEntity> entry : entities.entrySet()) {
+                // We are registering librarymod:librarian
+                writeString(output, entry.getKey().toString());
+                // It's got the type ID of 85
+                ByteBufHelper.writeVarInt(output, entry.getValue().getTypeId());
+            }
+
+            // Sir, we do not want to declare aliases
+            ByteBufHelper.writeVarInt(output, 0);
+
+            // Or overrides
+            ByteBufHelper.writeVarInt(output, 0);
+
+            // No.. Not even blocked
+            ByteBufHelper.writeVarInt(output, 0);
+
+            // Or dummied. What is dummied anyways. What are these others?
+            ByteBufHelper.writeVarInt(output, 0);
+
+            fmlRegistries = stream.toByteArray();
+        }
+    }
+
+    public static void registerModdedEntity(NamespacedKey name, ModdedEntity entity, boolean register) {
+        if (entities.keySet().stream().anyMatch(n -> n.toString().equalsIgnoreCase(name.toString()))) {
+            throw new IllegalArgumentException(name + " has already been registered");
+        }
+
+        if (entities.values().stream().anyMatch(n -> n.getName().equalsIgnoreCase(entity.getName()))) {
+            throw new IllegalArgumentException("Modded entity " + entity.getName() + " has already been registered");
+        }
+
+        Object entityType;
+
+        if (register) {
+            entityType = ReflectionManager.registerEntityType(name);
+            int entityId = ReflectionManager.getEntityTypeId(entityType);
+
+            entity.setTypeId(entityId);
+        } else {
+            entityType = ReflectionManager.getEntityType(name);
+            int entityId = ReflectionManager.getEntityTypeId(entityType);
+
+            entity.setTypeId(entityId);
+        }
+
+        entity.setEntityType(entityType);
+
+        entities.put(name, entity);
+    }
+
+    public static ModdedEntity getModdedEntity(NamespacedKey name) {
+        return entities.get(name);
+    }
+
+    public static ModdedEntity getModdedEntity(String name) {
+        for (ModdedEntity entity : entities.values()) {
+            if (!entity.getName().equalsIgnoreCase(name)) {
+                continue;
+            }
+
+            return entity;
+        }
+
+        return null;
+    }
+
+    public static void doMods(Player player) {
+        ArrayList<String> mods = getForgeMods().getIfPresent(player.getName());
+
+        player.setMetadata("forge_mods", new FixedMetadataValue(LibsDisguises.getInstance(), mods));
+
+        for (ModdedEntity e : ModdedManager.getEntities().values()) {
+            if (e.getMod() == null) {
+                continue;
+            }
+
+            if (mods.contains(e.getMod().toLowerCase(Locale.ENGLISH))) {
+                continue;
+            }
+
+            if (e.getRequired() == null) {
+                continue;
+            }
+
+            player.kickPlayer(e.getRequired());
+            break;
+        }
+    }
+
+    public static ArrayList<DisguisePerm> getDisguiseTypes() {
+        ArrayList<DisguisePerm> perms = new ArrayList<>();
+
+        for (Map.Entry<NamespacedKey, ModdedEntity> entry : entities.entrySet()) {
+            perms.add(new DisguisePerm(entry.getValue().isLiving() ? DisguiseType.MODDED_LIVING : DisguiseType.MODDED_MISC,
+                entry.getValue().getName()));
+        }
+
+        return perms;
+    }
+}

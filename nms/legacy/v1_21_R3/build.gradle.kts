@@ -1,0 +1,15 @@
+plugins {
+    id("nms-module-plugin")
+}
+
+description = "v1_21_R3"
+
+nmsModule {
+    craftbukkitVersion.set("1.21.4-R0.1-SNAPSHOT")
+    javaVersion.set(JavaVersion.VERSION_21)
+    layerFrom.set(":nms:legacy:v1_21_R2")
+}
+
+dependencies {
+    paperweight.paperDevBundle(nmsModule.craftbukkitVersion.get())
+}

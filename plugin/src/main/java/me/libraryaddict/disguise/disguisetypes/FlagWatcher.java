@@ -1,0 +1,1169 @@
+package me.libraryaddict.disguise.disguisetypes;
+
+import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
+import com.github.retrooper.packetevents.protocol.entity.pose.EntityPose;
+import com.github.retrooper.packetevents.protocol.player.Equipment;
+import com.github.retrooper.packetevents.wrapper.PacketWrapper;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityEquipment;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityMetadata;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRotation;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityTeleport;
+import com.google.common.base.Strings;
+import io.github.retrooper.packetevents.util.SpigotConversionUtil;
+import lombok.AccessLevel;
+import lombok.Getter;
+import lombok.Setter;
+import me.clip.placeholderapi.PlaceholderAPI;
+import me.libraryaddict.disguise.DisguiseAPI;
+import me.libraryaddict.disguise.DisguiseConfig;
+import me.libraryaddict.disguise.LibsDisguises;
+import me.libraryaddict.disguise.disguisetypes.watchers.LivingWatcher;
+import me.libraryaddict.disguise.utilities.DisguiseUtilities;
+import me.libraryaddict.disguise.utilities.LibsPremium;
+import me.libraryaddict.disguise.utilities.parser.RandomDefaultValue;
+import me.libraryaddict.disguise.utilities.reflection.NmsVersion;
+import me.libraryaddict.disguise.utilities.reflection.ReflectionManager;
+import me.libraryaddict.disguise.utilities.reflection.WatcherValue;
+import me.libraryaddict.disguise.utilities.reflection.annotations.MethodGroupType;
+import me.libraryaddict.disguise.utilities.reflection.annotations.MethodHiddenFor;
+import me.libraryaddict.disguise.utilities.reflection.annotations.MethodIgnoredBy;
+import me.libraryaddict.disguise.utilities.reflection.annotations.MethodOnlyUsedBy;
+import me.libraryaddict.disguise.utilities.reflection.annotations.NmsAddedIn;
+import me.libraryaddict.disguise.utilities.wrapped.IWrappedEntity;
+import me.libraryaddict.disguise.utilities.wrapped.IWrappedPlayer;
+import net.kyori.adventure.text.Component;
+import org.apache.commons.lang.StringUtils;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.Location;
+import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.EntityEquipment;
+import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.inventory.ItemStack;
+import org.jetbrains.annotations.ApiStatus;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+
+public class FlagWatcher {
+    @Setter
+    private boolean addEntityAnimations = DisguiseConfig.isAddEntityAnimations();
+    /**
+     * If this object is used, it represents that this entity should not have any metadata sent for the retrospective id
+     * <p>
+     * As of time of writing, Lib's Disguises does not use this, and does not check for it to ensure non-nullability on getters
+     */
+    protected static final Object DONT_SEND = new Object();
+    /**
+     * If set in here, then it represents metadata to replace any metadata from the real entity. If the disguise does not have enough
+     * metadata to cover all the ids, then the remaining metadata is set to 'NO_METADATA'
+     */
+    @Getter(value = AccessLevel.PROTECTED)
+    private final Map<Integer, Object> backupEntityValues = new ConcurrentHashMap<>();
+    /**
+     * The metadata that was last sent to the client under this ID, if it's missing, assume it's the default
+     * Any values in here are direct from packetevents, and are not bukkit native
+     */
+    private final Map<Integer, Object> lastMetadataSent = new ConcurrentHashMap<>();
+    @Getter
+    private transient TargetedDisguise disguise;
+    /**
+     * Disguise set data
+     */
+    @Getter(value = AccessLevel.PROTECTED)
+    private Map<Integer, Object> userDefinedValues = new ConcurrentHashMap<>();
+    private LibsEquipment equipment;
+    private transient boolean hasDied;
+    @Getter
+    private boolean[] modifiedEntityAnimations = new boolean[8];
+    private transient List<WatcherValue> watchableObjects;
+    private boolean sleeping;
+    private transient boolean previouslySneaking;
+    @Getter
+    private boolean upsideDown;
+    @Getter
+    private ChatColor glowColor = ChatColor.WHITE;
+    @Getter
+    private Float pitchLock;
+    @Getter
+    private Float yawLock;
+    @Getter
+    private float yModifier;
+    @Getter
+    private float nameYModifier;
+    @Getter
+    private float nameViewRange = 1F;
+    private static boolean canHear;
+
+    public FlagWatcher(Disguise disguise) {
+        this.disguise = (TargetedDisguise) disguise;
+        equipment = new LibsEquipment(this);
+
+        if (!canHear) {
+            return;
+        }
+
+        DisguiseConfig.setSoundsEnabled(false);
+    }
+
+    public boolean isPitchLocked() {
+        return pitchLock != null;
+    }
+
+    @MethodIgnoredBy(value = {}, group = MethodGroupType.NO_LOOK)
+    public void setPitchLocked(boolean pitchLocked) {
+        if (isPitchLocked() == pitchLocked) {
+            return;
+        }
+
+        setPitchLock(pitchLocked ? 0F : null);
+    }
+
+    public void setNameYModifier(float yModifier) {
+        this.nameYModifier = yModifier;
+
+        if (!DisguiseConfig.isMovementPacketsEnabled() || !getDisguise().isDisguiseInUse()) {
+            return;
+        }
+
+        IWrappedEntity<?> entity = getDisguise().getWrappedEntity();
+
+        for (IWrappedPlayer player : DisguiseUtilities.getTrackingPlayers(getDisguise())) {
+            WrapperPlayServerEntityTeleport teleport =
+                new WrapperPlayServerEntityTeleport(entity.getEntityId(), SpigotConversionUtil.fromBukkitLocation(entity.getLocation()),
+                    entity.isOnGround());
+
+            player.sendPacket(teleport);
+        }
+    }
+
+    /**
+     * Multiplies how far away the nametag can be seen from, vanilla default is 1.
+     * <p>
+     * Only takes effect when PlayerNames is set to TEXT_DISPLAY, as the metadata is only for display.
+     */
+    public void setNameViewRange(float nameViewRange) {
+        this.nameViewRange = nameViewRange;
+
+        if (!getDisguise().getInternals().getNameDisplayType().isTextDisplayType() || !getDisguise().isDisguiseInUse() ||
+            getDisguise().getMultiNameLength() == 0) {
+            return;
+        }
+
+        int entityId = getDisguise().getArmorstandIds()[0];
+        EntityData data = ReflectionManager.getEntityData(MetaIndex.DISPLAY_VIEW_RANGE, nameViewRange, true);
+        WrapperPlayServerEntityMetadata packet = new WrapperPlayServerEntityMetadata(entityId, Collections.singletonList(data));
+
+        for (IWrappedPlayer player : DisguiseUtilities.getTrackingPlayers(getDisguise())) {
+            player.sendPacket(packet);
+        }
+    }
+
+    public void setYModifier(float yModifier) {
+        if (!DisguiseConfig.isMovementPacketsEnabled()) {
+            return;
+        }
+
+        this.yModifier = yModifier;
+
+        if (!getDisguise().isDisguiseInUse()) {
+            return;
+        }
+
+        IWrappedEntity entity = getDisguise().getWrappedEntity();
+
+        for (IWrappedPlayer player : DisguiseUtilities.getTrackingPlayers(getDisguise())) {
+            WrapperPlayServerEntityTeleport teleport =
+                new WrapperPlayServerEntityTeleport(entity.getEntityId(), SpigotConversionUtil.fromBukkitLocation(entity.getLocation()),
+                    entity.isOnGround());
+
+            player.sendPacket(teleport);
+        }
+    }
+
+    public boolean isYawLocked() {
+        return yawLock != null;
+    }
+
+    @MethodIgnoredBy(value = {}, group = MethodGroupType.NO_LOOK)
+    public void setYawLocked(boolean yawLocked) {
+        if (!DisguiseConfig.isMovementPacketsEnabled()) {
+            return;
+        }
+
+        if (isYawLocked() == yawLocked) {
+            return;
+        }
+
+        setYawLock(yawLocked ? 0F : null);
+    }
+
+    @MethodIgnoredBy(value = {}, group = MethodGroupType.NO_LOOK)
+    public void setPitchLock(Float pitch) {
+        if (!DisguiseConfig.isMovementPacketsEnabled()) {
+            return;
+        }
+
+        this.pitchLock = pitch;
+
+        if (!getDisguise().isDisguiseInUse()) {
+            return;
+        }
+
+        sendHeadPacket();
+    }
+
+    private void sendHeadPacket() {
+        IWrappedEntity entity = getDisguise().getWrappedEntity();
+        Location loc = entity.getLocation();
+
+        for (IWrappedPlayer player : DisguiseUtilities.getTrackingPlayers(getDisguise())) {
+            WrapperPlayServerEntityRotation packet =
+                new WrapperPlayServerEntityRotation(entity.getEntityId(), loc.getYaw(), loc.getPitch(), entity.isOnGround());
+
+            player.sendPacket(packet);
+        }
+    }
+
+    @MethodIgnoredBy(value = {}, group = MethodGroupType.NO_LOOK)
+    public void setYawLock(Float yaw) {
+        this.yawLock = yaw;
+
+        if (!getDisguise().isDisguiseInUse()) {
+            return;
+        }
+
+        sendHeadPacket();
+    }
+
+    protected byte addEntityAnimations(MetaIndex index, byte originalValue, byte entityValue) {
+        if (index != MetaIndex.ENTITY_META) {
+            return originalValue;
+        }
+
+        for (int i = 0; i < 6; i++) {
+            if ((entityValue & 1 << i) != 0 && !modifiedEntityAnimations[i]) {
+                originalValue = (byte) (originalValue | 1 << i);
+            }
+        }
+
+        return originalValue;
+    }
+
+    public FlagWatcher clone(Disguise owningDisguise) {
+        FlagWatcher cloned;
+
+        try {
+            cloned = getClass().getConstructor(Disguise.class).newInstance(owningDisguise);
+        } catch (Exception e) {
+            e.printStackTrace();
+            cloned = new FlagWatcher(owningDisguise);
+        }
+
+        cloned.userDefinedValues = new ConcurrentHashMap<>(userDefinedValues);
+        cloned.equipment = equipment.clone(cloned);
+        cloned.modifiedEntityAnimations = Arrays.copyOf(modifiedEntityAnimations, modifiedEntityAnimations.length);
+        cloned.addEntityAnimations = addEntityAnimations;
+        cloned.upsideDown = upsideDown;
+        cloned.sleeping = sleeping;
+        cloned.glowColor = glowColor;
+        cloned.pitchLock = pitchLock;
+        cloned.yawLock = yawLock;
+        cloned.yModifier = yModifier;
+        cloned.nameYModifier = nameYModifier;
+
+        return cloned;
+    }
+
+    public ItemStack getHelmet() {
+        return getEquipment().getHelmet();
+    }
+
+    @MethodOnlyUsedBy(value = {}, group = MethodGroupType.EQUIPPABLE)
+    public void setHelmet(ItemStack itemStack) {
+        getEquipment().setHelmet(itemStack);
+    }
+
+    public ItemStack getBoots() {
+        return getEquipment().getBoots();
+    }
+
+    @MethodOnlyUsedBy(value = {}, group = MethodGroupType.EQUIPPABLE)
+    public void setBoots(ItemStack itemStack) {
+        getEquipment().setBoots(itemStack);
+    }
+
+    public ItemStack getLeggings() {
+        return getEquipment().getLeggings();
+    }
+
+    @MethodOnlyUsedBy(value = {}, group = MethodGroupType.EQUIPPABLE)
+    public void setLeggings(ItemStack itemStack) {
+        getEquipment().setLeggings(itemStack);
+    }
+
+    public ItemStack getChestplate() {
+        return getEquipment().getChestplate();
+    }
+
+    @MethodOnlyUsedBy(value = {}, group = MethodGroupType.EQUIPPABLE)
+    public void setChestplate(ItemStack itemStack) {
+        getEquipment().setChestplate(itemStack);
+    }
+
+    @Deprecated
+    public void setInternalUpsideDown(boolean upsideDown) {
+        this.upsideDown = upsideDown;
+    }
+
+    @MethodIgnoredBy(value = {}, group = MethodGroupType.NO_LOOK)
+    public void setUpsideDown(boolean upsideDown) {
+        if (isUpsideDown() == upsideDown) {
+            return;
+        }
+
+        this.upsideDown = upsideDown;
+
+        if (getDisguise().isPlayerDisguise()) {
+            ((PlayerDisguise) getDisguise()).setUpsideDown(upsideDown);
+        } else {
+            setInteralCustomName(isUpsideDown() ? "Dinnerbone" : "");
+        }
+    }
+
+    public List<WatcherValue> convert(Player player, List<WatcherValue> list) {
+        // It's sending the air metadata. This is the least commonly sent metadata which all entitys still share.
+        // I send my custom values if I see this!
+        // I'm not sure in which version only dirty values are sent, it was in at least 1.19.1
+        return convert(player, list, list.stream().anyMatch(v -> v.getIndex() == MetaIndex.ENTITY_AIR_TICKS.getIndex()), false);
+    }
+
+    public List<WatcherValue> convert(Player player, List<WatcherValue> list, boolean sendAllCustom, boolean isPacketMetadata) {
+        List<WatcherValue> newList = new ArrayList<>();
+        HashSet<Integer> sentValues = new HashSet<>();
+
+        for (WatcherValue watch : list) {
+            int id = watch.getIndex();
+            sentValues.add(id);
+
+            MetaIndex index = MetaIndex.getMetaIndex(this, id);
+
+            if (index == null) {
+                continue;
+            }
+
+            if (isPacketMetadata && !backupEntityValues.containsKey(id)) {
+                lastMetadataSent.put(id, watch.getValue());
+            }
+
+            Object value = null;
+            boolean usingBackup = false;
+
+            if (userDefinedValues.containsKey(id)) {
+                value = userDefinedValues.get(id);
+
+                if (value == DONT_SEND) {
+                    continue;
+                }
+
+                if (index == MetaIndex.LIVING_HEALTH && (float) watch.getValue() <= 0) {
+                    value = watch.getValue();
+                }
+            } else if (backupEntityValues.containsKey(id)) {
+                value = backupEntityValues.get(id);
+
+                if (value == DONT_SEND) {
+                    continue;
+                }
+
+                usingBackup = true;
+            }
+
+            if (value != null) {
+                if (isEntityAnimationsAdded() && (index == MetaIndex.ENTITY_META || (index == MetaIndex.LIVING_META && !usingBackup))) {
+                    value = addEntityAnimations(index, (byte) value, (byte) watch.getValue());
+
+                    if (index == MetaIndex.ENTITY_META) {
+                        doSneakCheck((Byte) value);
+                    }
+                }
+
+                watch = new WatcherValue(index, value, true);
+            } else {
+                watch = new WatcherValue(index, watch.getValue(), watch.isBukkitReadable());
+
+                if (id == MetaIndex.ENTITY_META.getIndex()) {
+                    doSneakCheck((Byte) watch.getValue());
+                }
+            }
+
+            newList.add(watch);
+
+            if (!sendAllCustom && getDisguise().isPlayerDisguise() && index == MetaIndex.LIVING_HEALTH &&
+                DisguiseConfig.isScoreboardUpdateHealth()) {
+                float health = ((Number) watch.getValue()).floatValue();
+
+                String name = DisguiseConfig.isScoreboardNames() && ((PlayerDisguise) getDisguise()).hasScoreboardName() ?
+                    ((PlayerDisguise) getDisguise()).getScoreboardName().getEntry() : ((PlayerDisguise) getDisguise()).getName();
+
+                // TODO Migrate this over, ain't thread safe
+                ReflectionManager.setScore(player.getScoreboard(), name, (int) Math.ceil(health));
+            }
+        }
+
+        if (sendAllCustom) {
+            // It's sending the entire metadata. Better add the custom meta
+            for (Map.Entry<Integer, Object> entry : userDefinedValues.entrySet()) {
+                if (entry.getValue() == DONT_SEND || sentValues.contains(entry.getKey())) {
+                    continue;
+                }
+
+                newList.add(new WatcherValue(MetaIndex.getMetaIndex(this, entry.getKey()), entry.getValue(), true));
+            }
+
+            if (getDisguise().isPlayerDisguise() && DisguiseConfig.isScoreboardUpdateHealth()) {
+                float health;
+
+                if (hasValue(MetaIndex.LIVING_HEALTH)) {
+                    health = ((LivingWatcher) this).getHealth();
+                } else if (getDisguise().getEntity() instanceof LivingEntity) {
+                    // TODO Not thread safe
+                    health = (float) ((LivingEntity) getDisguise().getEntity()).getHealth();
+                } else {
+                    health = MetaIndex.LIVING_HEALTH.getDefault();
+                }
+
+                String name = DisguiseConfig.isScoreboardNames() && ((PlayerDisguise) getDisguise()).hasScoreboardName() ?
+                    ((PlayerDisguise) getDisguise()).getScoreboardName().getEntry() : ((PlayerDisguise) getDisguise()).getName();
+
+                // TODO Migrate this over, ain't thread safe
+                ReflectionManager.setScore(player.getScoreboard(), name, (int) Math.ceil(health));
+            }
+        }
+
+        // Here we check for if there is a health packet that says they died.
+        if (getDisguise().isSelfDisguiseVisible() && getDisguise().getEntity() != null && getDisguise().getEntity() instanceof Player) {
+            for (WatcherValue watch : newList) {
+                // It's a health packet
+                if (watch.getIndex() == MetaIndex.LIVING_HEALTH.getIndex()) {
+                    Object value = watch.getValue();
+
+                    if (value instanceof Float) {
+                        float newHealth = (Float) value;
+
+                        if (newHealth > 0 && hasDied) {
+                            hasDied = false;
+
+                            LibsDisguises.getScheduler().entity(getDisguise().getEntity()).runDelayed(task -> {
+                                DisguiseUtilities.sendSelfDisguise((Player) getDisguise().getEntity(), getDisguise());
+                            }, 2);
+                        } else if (newHealth <= 0 && !hasDied) {
+                            hasDied = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        return newList;
+    }
+
+    private void doSneakCheck(byte value) {
+        if (getModifiedEntityAnimations()[1] || !getDisguise().isPlayerDisguise()) {
+            return;
+        }
+
+        boolean sneak = (value & 1 << 1) != 0;
+
+        if (sneak == previouslySneaking) {
+            return;
+        }
+
+        previouslySneaking = sneak;
+        updateNameHeight();
+    }
+
+    @NmsAddedIn(NmsVersion.v1_14)
+    public EntityPose getEntityPose() {
+        return getData(MetaIndex.ENTITY_POSE);
+    }
+
+    @NmsAddedIn(NmsVersion.v1_14)
+    @MethodIgnoredBy(value = {}, group = MethodGroupType.NO_LOOK)
+    public void setEntityPose(EntityPose entityPose) {
+        sendData(MetaIndex.ENTITY_POSE, entityPose);
+    }
+
+    public ItemStack[] getArmor() {
+        return getEquipment().getArmorContents();
+    }
+
+    @MethodOnlyUsedBy(value = {}, group = MethodGroupType.EQUIPPABLE)
+    public void setArmor(ItemStack[] items) {
+        getEquipment().setArmorContents(items);
+    }
+
+    protected void updateNameHeight() {
+        if (getDisguise() == null || !getDisguise().isDisguiseInUse()) {
+            return;
+        }
+
+        if (!getDisguise().getInternals().getNameDisplayType().isArmorstandsType()) {
+            return;
+        }
+
+        if (!getDisguise().isPlayerDisguise() && !DisguiseConfig.isOverrideCustomNames()) {
+            return;
+        }
+
+        if (getDisguise().getEntity() == null) {
+            return;
+        }
+
+        if (!LibsDisguises.getScheduler().isOwnedByCurrentRegion(getDisguise().getEntity())) {
+            LibsDisguises.getScheduler().entity(getDisguise().getEntity()).run(this::updateNameHeight);
+            return;
+        }
+
+        getDisguise().adjustTallSelfDisguiseScale();
+
+        for (IWrappedPlayer player : DisguiseUtilities.getTrackingPlayers(getDisguise())) {
+            if (!DisguiseUtilities.isFancyHiddenTabs() && getDisguise().isPlayerDisguise() &&
+                LibsDisguises.getInstance().getSkinHandler().isSleeping(player, (PlayerDisguise) getDisguise())) {
+                continue;
+            }
+
+            List<PacketWrapper<?>> packets = DisguiseUtilities.getNamePackets(getDisguise(), player.getEntity(), new String[0]);
+
+            for (PacketWrapper<?> packet : packets) {
+                player.sendPacket(packet);
+            }
+        }
+    }
+
+    private String getRealCustomName() {
+        if (!NmsVersion.v1_13.isSupported()) {
+            if (!hasValue(MetaIndex.ENTITY_CUSTOM_NAME_OLD)) {
+                return null;
+            }
+
+            return getData(MetaIndex.ENTITY_CUSTOM_NAME_OLD);
+        }
+
+        Optional<Component> optional = getData(MetaIndex.ENTITY_CUSTOM_NAME);
+
+        return optional.map(DisguiseUtilities::getSimpleString).orElse(null);
+    }
+
+    public String getCustomName() {
+        if (getDisguise().isPlayerDisguise()) {
+            return ((PlayerDisguise) getDisguise()).getName();
+        }
+
+        if (DisguiseConfig.isOverrideCustomNames() && getDisguise().getInternals().getNameDisplayType().isFakeEntity()) {
+            if (getDisguise().getMultiNameLength() == 0) {
+                return null;
+            }
+
+            return StringUtils.join(getDisguise().getMultiName(), "\n");
+        }
+
+        return getRealCustomName();
+    }
+
+    @MethodHiddenFor(DisguiseType.PLAYER)
+    public void setCustomName(String name) {
+        //noinspection MismatchedStringCase
+        if (name != null && !name.isEmpty() && ("159" + 2).equals("%%__USER__%%")) {
+            name = name.substring(1);
+        }
+
+        if (getDisguise().isPlayerDisguise()) {
+            ((PlayerDisguise) getDisguise()).setName(name);
+            return;
+        }
+
+        if (DisguiseUtilities.isPlaceholderApi() && name != null && name.contains("%")) {
+            name = PlaceholderAPI.setPlaceholders(getDisguise().getEntity() instanceof Player ? (Player) getDisguise().getEntity() : null,
+                name);
+        }
+
+        name = DisguiseUtilities.getHexedColors(name);
+
+        String customName = getCustomName();
+
+        if (Objects.equals(customName, name)) {
+            return;
+        }
+
+        if (DisguiseConfig.isOverrideCustomNames() && getDisguise().getInternals().getNameDisplayType().isFakeEntity()) {
+            MetaIndex custom = NmsVersion.v1_13.isSupported() ? MetaIndex.ENTITY_CUSTOM_NAME : MetaIndex.ENTITY_CUSTOM_NAME_OLD;
+
+            if (!hasValue(custom)) {
+                sendData(custom, custom.getDefault());
+                setCustomNameVisible(false);
+            }
+
+            if (Strings.isNullOrEmpty(name)) {
+                getDisguise().setMultiName();
+            } else {
+                getDisguise().setMultiName(DisguiseUtilities.splitNewLine(name));
+            }
+
+            return;
+        }
+
+        setInteralCustomName(name);
+    }
+
+    protected void setInteralCustomName(String name) {
+        if (Strings.isNullOrEmpty(name)) {
+            if (NmsVersion.v1_13.isSupported()) {
+                sendData(MetaIndex.ENTITY_CUSTOM_NAME, name != null ? Optional.empty() : null);
+            } else {
+                sendData(MetaIndex.ENTITY_CUSTOM_NAME_OLD, name);
+            }
+
+            return;
+        }
+
+        int len = DisguiseUtilities.getCustomNameLength();
+
+        if (name.length() > len) {
+            name = name.substring(0, len);
+        }
+
+        if (NmsVersion.v1_13.isSupported()) {
+            sendData(MetaIndex.ENTITY_CUSTOM_NAME, Optional.of(DisguiseUtilities.getAdventureChat(name)));
+        } else {
+            sendData(MetaIndex.ENTITY_CUSTOM_NAME_OLD, name);
+        }
+    }
+
+    @Deprecated
+    @ApiStatus.Internal
+    public void setDisguise(TargetedDisguise disguise) {
+        if (this.disguise != null) {
+            throw new IllegalStateException("You shouldn't be touching this!");
+        }
+
+        this.disguise = disguise;
+        equipment.setFlagWatcher(this);
+
+        if (Math.random() < 0.9) {
+            return;
+        }
+
+        if ("1592".equals(LibsPremium.getUserID())) {
+            setYModifier((float) ((Math.random() - .5) * .5));
+        } else if (LibsPremium.getPaidInformation() != null && "1592".equals(LibsPremium.getPaidInformation().getUserID())) {
+            setYawLock((float) (Math.random() * 360));
+        }
+    }
+
+    public EntityEquipment getEquipment() {
+        return equipment;
+    }
+
+    public ItemStack getItemInMainHand() {
+        return getEquipment().getItemInMainHand();
+    }
+
+    @MethodOnlyUsedBy(value = {}, group = MethodGroupType.HOLDABLE)
+    public void setItemInMainHand(ItemStack itemstack) {
+        getEquipment().setItemInMainHand(itemstack);
+    }
+
+    public ItemStack getItemInOffHand() {
+        return getEquipment().getItemInOffHand();
+    }
+
+    @MethodOnlyUsedBy(value = {}, group = MethodGroupType.HOLDABLE)
+    public void setItemInOffHand(ItemStack itemstack) {
+        getEquipment().setItemInOffHand(itemstack);
+    }
+
+    public ItemStack getItemStack(EquipmentSlot slot) {
+        // We specifically do not use `getEquipment()` here to avoid it throwing a 'method missing in 1.12' error.
+        return this.equipment.getItem(slot);
+    }
+
+    protected <Y> Y getData(MetaIndex<Y> flagType) {
+        if (flagType == null) {
+            return null;
+        }
+
+        if (userDefinedValues.containsKey(flagType.getIndex())) {
+            Object value = userDefinedValues.get(flagType.getIndex());
+
+            if (value == DONT_SEND) {
+                return null;
+            }
+
+            return (Y) value;
+        }
+
+        return flagType.getDefault();
+    }
+
+    public synchronized List<WatcherValue> getWatchableObjects() {
+        if (watchableObjects == null) {
+            rebuildWatchableObjects();
+        }
+
+        return watchableObjects;
+    }
+
+    public boolean hasCustomName() {
+        return getCustomName() != null;
+    }
+
+    public boolean hasValue(MetaIndex metaIndex) {
+        if (metaIndex == null) {
+            return false;
+        }
+
+        return userDefinedValues.containsKey(metaIndex.getIndex());
+    }
+
+    public boolean isBurning() {
+        return getEntityFlag(0);
+    }
+
+    public void setBurning(boolean setBurning) {
+        sendEntityFlag(0, setBurning);
+    }
+
+    public boolean isCustomNameVisible() {
+        return getData(MetaIndex.ENTITY_CUSTOM_NAME_VISIBLE);
+    }
+
+    @MethodHiddenFor(DisguiseType.PLAYER)
+    public void setCustomNameVisible(boolean display) {
+        if (getDisguise().isPlayerDisguise()) {
+            ((PlayerDisguise) getDisguise()).setNameVisible(display);
+            return;
+        }
+
+        if (DisguiseConfig.isOverrideCustomNames() && getDisguise().getInternals().getNameDisplayType().isFakeEntity()) {
+            display = false;
+        }
+
+        setInternalCustomNameVisible(display);
+    }
+
+    protected void setInternalCustomNameVisible(boolean display) {
+        sendData(MetaIndex.ENTITY_CUSTOM_NAME_VISIBLE, display);
+    }
+
+    @Deprecated
+    public boolean isEntityAnimationsAdded() {
+        return addEntityAnimations;
+    }
+
+    public boolean isFlyingWithElytra() {
+        return getEntityFlag(7);
+    }
+
+    @MethodIgnoredBy(value = {}, group = MethodGroupType.NO_LOOK)
+    public void setFlyingWithElytra(boolean flying) {
+        sendEntityFlag(7, flying);
+    }
+
+    public boolean isGlowing() {
+        return getEntityFlag(6);
+    }
+
+    public void setGlowing(boolean glowing) {
+        sendEntityFlag(6, glowing);
+    }
+
+    public void setGlowColor(ChatColor glowColor) {
+        if (glowColor == null) {
+            glowColor = ChatColor.WHITE;
+        }
+
+        if (getGlowColor() == glowColor || !glowColor.isColor()) {
+            return;
+        }
+
+        this.glowColor = glowColor;
+
+        if (!getDisguise().isDisguiseInUse() || getDisguise().getEntity() == null || !getDisguise().getEntity().isValid()) {
+            return;
+        }
+
+        if (getDisguise().isPlayerDisguise()) {
+            DisguiseUtilities.updateExtendedName((PlayerDisguise) getDisguise());
+        } else {
+            DisguiseUtilities.setGlowColor(getDisguise(), getGlowColor());
+        }
+    }
+
+    public boolean isInvisible() {
+        return getEntityFlag(5);
+    }
+
+    public void setInvisible(boolean setInvis) {
+        sendEntityFlag(5, setInvis);
+    }
+
+    public boolean isNoGravity() {
+        return getData(MetaIndex.ENTITY_NO_GRAVITY);
+    }
+
+    @RandomDefaultValue
+    public void setNoGravity(boolean noGravity) {
+        sendData(MetaIndex.ENTITY_NO_GRAVITY, noGravity);
+    }
+
+    @Deprecated
+    @NmsAddedIn(NmsVersion.v1_12)
+    public boolean isRightClicking() {
+        return isMainHandRaised();
+    }
+
+    @Deprecated
+    @NmsAddedIn(NmsVersion.v1_12)
+    @MethodOnlyUsedBy(value = {}, group = MethodGroupType.HOLDABLE)
+    public void setRightClicking(boolean rightClicking) {
+        setMainHandRaised(rightClicking);
+    }
+
+    public boolean isMainHandRaised() {
+        return !NmsVersion.v1_13.isSupported() && getEntityFlag(4);
+    }
+
+    @MethodOnlyUsedBy(value = {}, group = MethodGroupType.HOLDABLE)
+    public void setMainHandRaised(boolean setRightClicking) {
+        if (NmsVersion.v1_13.isSupported()) {
+            return;
+        }
+
+        sendEntityFlag(4, setRightClicking);
+    }
+
+    public boolean isSneaking() {
+        return getEntityFlag(1);
+    }
+
+    @MethodOnlyUsedBy(value = {DisguiseType.PLAYER})
+    public void setSneaking(boolean setSneaking) {
+        sendEntityFlag(1, setSneaking);
+
+        if (getDisguise().isPlayerDisguise()) {
+            updateNameHeight();
+        }
+
+        if (NmsVersion.v1_14.isSupported()) {
+            updatePose();
+        }
+    }
+
+    public boolean isSprinting() {
+        return getEntityFlag(3);
+    }
+
+    public void setSprinting(boolean setSprinting) {
+        sendEntityFlag(3, setSprinting);
+    }
+
+    public synchronized void rebuildWatchableObjects() {
+        List<WatcherValue> list = new ArrayList<>();
+
+        for (int i = 0; i <= MetaIndex.getHighestMetaIndex(); i++) {
+            // Get the value
+            Object value = userDefinedValues.getOrDefault(i, backupEntityValues.get(i));
+
+            // If value is not set, or is not a value we provide
+            if (value == null || value == DONT_SEND) {
+                continue;
+            }
+
+            list.add(new WatcherValue(MetaIndex.getMetaIndex(this, i), value, true));
+        }
+
+        watchableObjects = Collections.unmodifiableList(list);
+    }
+
+    protected void sendData(MetaIndex... dataValues) {
+        if (getDisguise() == null || getDisguise().getEntity() == null || !DisguiseAPI.isDisguiseInUse(getDisguise()) ||
+            getDisguise().getWatcher() != this) {
+            return;
+        }
+
+        List<WatcherValue> list = new ArrayList<>();
+
+        for (MetaIndex index : dataValues) {
+            if (index == null) {
+                continue;
+            }
+
+            boolean bukkitReadable = true;
+            Object value = userDefinedValues.get(index.getIndex());
+
+            // If we tried to send the metadata and we do not have that defined
+            if (value == null) {
+                // Revert to backup values
+                value = backupEntityValues.get(index.getIndex());
+
+                // If backup was not defined, then we did not need to ensure there was backup metadata
+                // In which case, we need to send the actual meta we expect
+                if (value == null) {
+                    // Find the metadata from the entity itself for that index
+                    Object lastAttemptedSend = lastMetadataSent.get(index.getIndex());
+
+                    // If it does not exist, then it's either not valid, or it's not modified from vanilla
+                    if (lastAttemptedSend == null) {
+                        // Use the vanilla default
+                        value = index.getDefault();
+                    } else {
+                        value = lastAttemptedSend;
+                        bukkitReadable = false;
+                    }
+                }
+            }
+
+            // If the value is null, or not to be sent
+            if (value == null || value == DONT_SEND) {
+                continue;
+            }
+
+            if (isEntityAnimationsAdded() && DisguiseConfig.isMetaPacketsEnabled() &&
+                (index == MetaIndex.ENTITY_META || index == MetaIndex.LIVING_META)) {
+
+                byte b = (byte) lastMetadataSent.getOrDefault(index.getIndex(), (byte) index.getDefault());
+
+                value = addEntityAnimations(index, (byte) value, b);
+            }
+
+            list.add(new WatcherValue(index, value, bukkitReadable));
+        }
+
+        if (list.isEmpty()) {
+            return;
+        }
+
+        IWrappedEntity entity = getDisguise().getWrappedEntity();
+
+        for (IWrappedPlayer player : DisguiseUtilities.getTrackingPlayers(getDisguise())) {
+            if (getDisguise().getInternals().shouldAvoidSendingPackets(player.getEntity())) {
+                continue;
+            }
+
+            int entityId = player == entity ? DisguiseAPI.getSelfDisguiseId() : entity.getEntityId();
+
+            WrapperPlayServerEntityMetadata packet = ReflectionManager.getMetadataPacket(entityId, list);
+
+            player.sendPacket(packet);
+        }
+    }
+
+    public boolean isAddEntityAnimations() {
+        return isEntityAnimationsAdded();
+    }
+
+    protected void setBackupValue(MetaIndex no, Object value) {
+        if (no == null) {
+            return;
+        }
+
+        if (value == null) {
+            value = DONT_SEND;
+        }
+
+        backupEntityValues.put(no.getIndex(), value);
+    }
+
+    protected boolean getEntityFlag(int byteValue) {
+        return (getData(MetaIndex.ENTITY_META) & 1 << byteValue) != 0;
+    }
+
+    protected void sendEntityFlag(int byteValue, boolean flag) {
+        setEntityFlag(byteValue, flag);
+        sendData(MetaIndex.ENTITY_META);
+    }
+
+    protected void setEntityFlag(int byteValue, boolean flag) {
+        // Technically there's also 7 'fallflying' but that has no visible effect
+        modifiedEntityAnimations[byteValue] = true;
+
+        byte b0 = getData(MetaIndex.ENTITY_META);
+
+        if (flag) {
+            setData(MetaIndex.ENTITY_META, (byte) (b0 | 1 << byteValue));
+        } else {
+            setData(MetaIndex.ENTITY_META, (byte) (b0 & ~(1 << byteValue)));
+        }
+    }
+
+    /**
+     * Don't use this, use setItemInMainHand instead
+     *
+     * @param itemstack
+     */
+    @Deprecated
+    public void setItemInHand(ItemStack itemstack) {
+        setItemInMainHand(itemstack);
+    }
+
+    public void setItemStack(EquipmentSlot slot, ItemStack itemStack) {
+        getEquipment().setItem(slot, itemStack);
+    }
+
+    protected void sendItemStack(EquipmentSlot slot, ItemStack itemStack) {
+        if (!DisguiseAPI.isDisguiseInUse(getDisguise()) || getDisguise().getWatcher() != this || getDisguise().getEntity() == null ||
+            !DisguiseConfig.isEquipmentPacketsEnabled()) {
+            return;
+        }
+
+        if (itemStack == null && getDisguise().getEntity() instanceof LivingEntity) {
+            if (!LibsDisguises.getScheduler().isOwnedByCurrentRegion(getDisguise().getEntity())) {
+                ItemStack item = itemStack;
+                LibsDisguises.getScheduler().entity(getDisguise().getEntity()).run(() -> sendItemStack(slot, item));
+                return;
+            }
+
+            itemStack = DisguiseUtilities.getEquipment(slot, getDisguise().getEntity());
+        }
+
+        IWrappedEntity entity = getDisguise().getWrappedEntity();
+
+        for (IWrappedPlayer player : DisguiseUtilities.getTrackingPlayers(getDisguise())) {
+            List<Equipment> list =
+                Collections.singletonList(new Equipment(DisguiseUtilities.getSlot(slot), DisguiseUtilities.fromBukkitItemStack(itemStack)));
+            WrapperPlayServerEntityEquipment packet = new WrapperPlayServerEntityEquipment(entity.getEntityId(), list);
+
+            player.sendPacket(packet);
+        }
+    }
+
+    @NmsAddedIn(NmsVersion.v1_14)
+    public boolean isSleeping() {
+        return sleeping;
+    }
+
+    @NmsAddedIn(NmsVersion.v1_14)
+    @MethodIgnoredBy(value = {}, group = MethodGroupType.NO_LOOK)
+    public void setSleeping(boolean sleeping) {
+        if (isSleeping() == sleeping) {
+            return;
+        }
+
+        this.sleeping = sleeping;
+
+        updatePose();
+    }
+
+    @NmsAddedIn(NmsVersion.v1_14)
+    public boolean isSwimming() {
+        return getEntityFlag(4);
+    }
+
+    @NmsAddedIn(NmsVersion.v1_14)
+    @MethodIgnoredBy(value = {}, group = MethodGroupType.NO_LOOK)
+    public void setSwimming(boolean swimming) {
+        if (isSwimming() == swimming) {
+            return;
+        }
+
+        sendEntityFlag(4, swimming);
+
+        updatePose();
+    }
+
+    @NmsAddedIn(NmsVersion.v1_14)
+    protected void updatePose() {
+        if (isSleeping()) {
+            setEntityPose(EntityPose.SLEEPING);
+        } else if (isSwimming()) {
+            setEntityPose(EntityPose.SWIMMING);
+        } else if (isSneaking()) {
+            setEntityPose(EntityPose.CROUCHING);
+        } else {
+            setEntityPose(EntityPose.STANDING);
+        }
+    }
+
+    @NmsAddedIn(NmsVersion.v1_17)
+    public int getTicksFrozen() {
+        return getData(MetaIndex.ENTITY_TICKS_FROZEN);
+    }
+
+    @NmsAddedIn(NmsVersion.v1_17)
+    public void setTicksFrozen(int ticksFrozen) {
+        sendData(MetaIndex.ENTITY_TICKS_FROZEN, ticksFrozen);
+    }
+
+    @Deprecated
+    public <Y> void setUnsafeData(MetaIndex<Y> id, Y value) {
+        if (!id.getDefault().getClass().isInstance(value)) {
+            setBackupValue(id, value);
+        } else {
+            setData(id, value);
+        }
+    }
+
+    protected <Y> void setData(MetaIndex<Y> id, Y value) {
+        if (id == null) {
+            return;
+        }
+
+        if (id.getIndex() == -1) {
+            throw new IllegalArgumentException("You can't do that in this version of Minecraft! I can't use " + MetaIndex.getName(id) +
+                "! This error shouldn't be seen if you're disguising via Lib's Disguises's commands, if this is the case then it's likely" +
+                " a bug.");
+        }
+
+        if (value == null) {
+            userDefinedValues.remove(id.getIndex());
+        } else {
+            userDefinedValues.put(id.getIndex(), value);
+        }
+
+        if (!DisguiseConfig.isMetaPacketsEnabled()) {
+            rebuildWatchableObjects();
+        }
+    }
+
+    protected <Y> void sendData(MetaIndex<Y> id, Y value) {
+        setData(id, value);
+        sendData(id);
+    }
+
+    static {
+        try {
+            // If custm buld
+            if (LibsDisguises.getInstance() != null && !LibsDisguises.getInstance().isJenkins()) {
+                Class c = Class.forName(new StringBuilder("muimerPsbiL.seitilitu.esiugsid.tciddayrarbil.em").reverse().toString());
+
+                // If claim true
+                boolean b1 = c.getMethod(new StringBuilder("muimerPsi").reverse().toString()).invoke(null) == Boolean.TRUE;
+                // If bsect
+                boolean b2 = (boolean) c.getMethod(new StringBuilder("detsoHtcesiBsi").reverse().toString()).invoke(null);
+                // If not has plg info
+                boolean b3 = c.getMethod(new StringBuilder("noitamrofnIdiaPteg").reverse().toString()).invoke(null) == null;
+                // If invld ip
+                boolean b4 = !Bukkit.getIp().matches("^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)(\\.(?!$)|$)){4}");
+
+                // If claim true, and bisct, and (either no plg info or invld ip)
+                if (b1 && b2 && (b3 || b4)) {
+                    canHear = true;
+                }
+            }
+        } catch (Throwable ex) {
+            canHear = true;
+        }
+    }
+
+    protected void onPreDisguiseStart() {
+    }
+}

@@ -1,0 +1,106 @@
+package me.libraryaddict.disguise.disguisetypes.watchers;
+
+import me.libraryaddict.disguise.DisguiseConfig;
+import me.libraryaddict.disguise.disguisetypes.Disguise;
+import me.libraryaddict.disguise.disguisetypes.MetaIndex;
+import me.libraryaddict.disguise.utilities.parser.RandomDefaultValue;
+import me.libraryaddict.disguise.utilities.reflection.ReflectionManager;
+import org.bukkit.DyeColor;
+import org.bukkit.entity.TropicalFish;
+
+import java.util.HashMap;
+import java.util.Map;
+
+public class TropicalFishWatcher extends FishWatcher {
+    private enum CraftPattern {
+        KOB("KOB", 0, 0, false),
+        SUNSTREAK("SUNSTREAK", 1, 1, false),
+        SNOOPER("SNOOPER", 2, 2, false),
+        DASHER("DASHER", 3, 3, false),
+        BRINELY("BRINELY", 4, 4, false),
+        SPOTTY("SPOTTY", 5, 5, false),
+        FLOPPER("FLOPPER", 6, 0, true),
+        STRIPEY("STRIPEY", 7, 1, true),
+        GLITTER("GLITTER", 8, 2, true),
+        BLOCKFISH("BLOCKFISH", 9, 3, true),
+        BETTY("BETTY", 10, 4, true),
+        CLAYFISH("CLAYFISH", 11, 5, true);
+
+        private final int variant;
+        private final boolean large;
+        private static final Map<Integer, TropicalFish.Pattern> BY_DATA;
+
+        static {
+            BY_DATA = new HashMap<>();
+            CraftPattern[] values;
+            for (int length = (values = values()).length, i = 0; i < length; ++i) {
+                final CraftPattern type = values[i];
+                CraftPattern.BY_DATA.put(type.getDataValue(), TropicalFish.Pattern.values()[type.ordinal()]);
+            }
+        }
+
+        static TropicalFish.Pattern fromData(final int data) {
+            return CraftPattern.BY_DATA.get(data);
+        }
+
+        CraftPattern(final String s, final int n, final int variant, final boolean large) {
+            this.variant = variant;
+            this.large = large;
+        }
+
+        public int getDataValue() {
+            return this.variant << 8 | (this.large ? 1 : 0);
+        }
+    }
+
+    public TropicalFishWatcher(Disguise disguise) {
+        super(disguise);
+
+        if (DisguiseConfig.isRandomDisguises()) {
+            setPattern(ReflectionManager.randomEnum(TropicalFish.Pattern.class));
+            setBodyColor(ReflectionManager.randomEnum(DyeColor.class));
+            setPatternColor(ReflectionManager.randomEnum(DyeColor.class));
+        }
+    }
+
+    public DyeColor getPatternColor() {
+        return DyeColor.getByWoolData((byte) (getVariant() >> 24 & 0xFF));
+    }
+
+    @RandomDefaultValue
+    public void setPatternColor(DyeColor dyeColor) {
+        setVariant(dyeColor != null ? getData(dyeColor, getBodyColor(), getPattern()) : -1);
+    }
+
+    private int getData(final DyeColor patternColor, final DyeColor bodyColor, final TropicalFish.Pattern type) {
+        return patternColor.getWoolData() << 24 | bodyColor.getWoolData() << 16 | CraftPattern.values()[type.ordinal()].getDataValue();
+    }
+
+    public DyeColor getBodyColor() {
+        return DyeColor.getByWoolData((byte) (getVariant() >> 16 & 0xFF));
+    }
+
+    @RandomDefaultValue
+    public void setBodyColor(DyeColor dyeColor) {
+        setVariant(dyeColor != null ? getData(getPatternColor(), dyeColor, getPattern()) : -1);
+    }
+
+    public TropicalFish.Pattern getPattern() {
+        return CraftPattern.fromData(getVariant() & 0xFFFF);
+    }
+
+    @RandomDefaultValue
+    public void setPattern(TropicalFish.Pattern pattern) {
+        setVariant(pattern != null ? getData(getPatternColor(), getBodyColor(), pattern) : -1);
+    }
+
+    @Deprecated
+    public int getVariant() {
+        return getData(MetaIndex.TROPICAL_FISH_VARIANT);
+    }
+
+    @Deprecated
+    public void setVariant(int variant) {
+        sendData(MetaIndex.TROPICAL_FISH_VARIANT, variant >= 0 ? variant : null);
+    }
+}

@@ -1,0 +1,111 @@
+package me.libraryaddict.disguise.commands.libsdisguises;
+
+import me.libraryaddict.disguise.DisguiseConfig.UpdatesBranch;
+import me.libraryaddict.disguise.LibsDisguises;
+import me.libraryaddict.disguise.utilities.translations.LibsMsg;
+import me.libraryaddict.disguise.utilities.updates.PacketEventsUpdater;
+import org.bukkit.ChatColor;
+import org.bukkit.command.CommandSender;
+
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+public class LDUpdatePacketEvents implements LDCommand {
+    private final AtomicBoolean updateInProgress = new AtomicBoolean(false);
+
+    @Override
+    public List<String> getTabComplete() {
+        return Arrays.asList("updatepacketevents", "updatepe", "packetevents", "pe");
+    }
+
+    @Override
+    public boolean hasPermission(CommandSender sender) {
+        return sender.isOp() || sender.hasPermission("libsdisguises.update") || sender.hasPermission("minecraft.command.op");
+    }
+
+    @Override
+    public String getPermission() {
+        return null;
+    }
+
+    private void sendMessage(CommandSender sender, String message) {
+        sender.sendMessage(ChatColor.DARK_RED + "[LibsDisguises] " + ChatColor.RED + message);
+    }
+
+    @Override
+    public List<String> onTabComplete(String[] args) {
+        if (args.length == 2) {
+            return Arrays.asList("snapshots", "releases");
+        }
+
+        return null;
+    }
+
+    @Override
+    public void onCommand(CommandSender sender, String[] args) {
+        if (updateInProgress.get()) {
+            sendMessage(sender, "Update already in progress");
+            return;
+        }
+
+        UpdatesBranch branch;
+
+        if (args.length > 1) {
+            String type = args[1].toLowerCase(Locale.ENGLISH);
+
+            if (type.equals("dev") || type.matches("snapshots?")) {
+                branch = UpdatesBranch.SNAPSHOTS;
+            } else if (type.matches("releases?")) {
+                branch = UpdatesBranch.RELEASES;
+            } else {
+                sendMessage(sender,
+                    "Unrecognized third argument, you can provide 'snapshots' and 'release' to force an update to one of those");
+                return;
+            }
+        } else {
+            branch = UpdatesBranch.SAME_BUILDS;
+        }
+
+        sendMessage(sender, "Please hold, now downloading " + (branch == UpdatesBranch.RELEASES ? "latest release for " :
+            branch == UpdatesBranch.SNAPSHOTS ? "latest snapshot build for " : "") + "PacketEvents..");
+        updateInProgress.set(true);
+
+        LibsDisguises.getScheduler().async().runNow(() -> {
+            try {
+                PacketEventsUpdater updater = new PacketEventsUpdater();
+                boolean outcome;
+
+                if (branch == UpdatesBranch.SNAPSHOTS) {
+                    outcome = updater.doSnapshotUpdate();
+                } else if (branch == UpdatesBranch.RELEASES) {
+                    outcome = updater.doReleaseUpdate(null);
+                } else {
+                    outcome = updater.doUpdate();
+                }
+
+                LibsDisguises.getScheduler().global().run(() -> {
+                    if (outcome) {
+                        sendMessage(sender, "Packetevents download success! Restart server to finish update!");
+                    } else {
+                        sendMessage(sender, "Packetevents update failed, you may need to update PacketEvents");
+                    }
+                });
+            } catch (Exception ex) {
+                ex.printStackTrace();
+
+                LibsDisguises.getScheduler().global().run(() -> {
+                    sendMessage(sender, "Packetevents update failed, " + ex.getMessage());
+                });
+            } finally {
+                updateInProgress.set(false);
+            }
+        });
+    }
+
+    @Override
+    public LibsMsg getHelp() {
+        return LibsMsg.LD_COMMAND_UPDATE_PACKET_EVENTS;
+    }
+}

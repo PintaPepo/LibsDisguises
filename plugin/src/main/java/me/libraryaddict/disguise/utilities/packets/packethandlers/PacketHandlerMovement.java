@@ -1,0 +1,444 @@
+package me.libraryaddict.disguise.utilities.packets.packethandlers;
+
+import com.github.retrooper.packetevents.protocol.entity.EntityPositionData;
+import com.github.retrooper.packetevents.protocol.packettype.PacketType;
+import com.github.retrooper.packetevents.protocol.packettype.PacketTypeCommon;
+import com.github.retrooper.packetevents.util.Vector3d;
+import com.github.retrooper.packetevents.wrapper.PacketWrapper;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityHeadLook;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityPositionSync;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMove;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMoveAndRotation;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRotation;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityStatus;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityTeleport;
+import me.libraryaddict.disguise.DisguiseAPI;
+import me.libraryaddict.disguise.disguisetypes.Disguise;
+import me.libraryaddict.disguise.disguisetypes.DisguiseType;
+import me.libraryaddict.disguise.disguisetypes.watchers.GridLockedWatcher;
+import me.libraryaddict.disguise.utilities.DisguiseUtilities;
+import me.libraryaddict.disguise.utilities.LibsPremium;
+import me.libraryaddict.disguise.utilities.movements.MovementTracker;
+import me.libraryaddict.disguise.utilities.packets.IPacketHandler;
+import me.libraryaddict.disguise.utilities.packets.LibsPackets;
+import me.libraryaddict.disguise.utilities.reflection.NmsVersion;
+import me.libraryaddict.disguise.utilities.wrapped.IWrappedEntity;
+import me.libraryaddict.disguise.utilities.wrapped.IWrappedPlayer;
+import org.apache.commons.lang.math.RandomUtils;
+import org.bukkit.Location;
+import org.bukkit.entity.AbstractHorse;
+
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+public class PacketHandlerMovement<T extends PacketWrapper<T>> implements IPacketHandler<T> {
+    private final boolean invalid = LibsPremium.getUserID().matches("\\d+") && Integer.parseInt(LibsPremium.getUserID()) < 2;
+
+    @Override
+    public PacketTypeCommon[] getHandledPackets() {
+        return new PacketTypeCommon[]{PacketType.Play.Server.ENTITY_RELATIVE_MOVE_AND_ROTATION, PacketType.Play.Server.ENTITY_ROTATION,
+            PacketType.Play.Server.ENTITY_TELEPORT, PacketType.Play.Server.ENTITY_RELATIVE_MOVE,
+            PacketType.Play.Server.ENTITY_POSITION_SYNC};
+    }
+
+    @Override
+    public void handle(Disguise disguise, LibsPackets<T> packets, IWrappedPlayer observer, IWrappedEntity entity) {
+        handleMovement(disguise, packets, observer, entity);
+
+        if (disguise.getInternals().getNameDisplayType().isFakeEntity()) {
+            DisguiseUtilities.adjustNamePositions(disguise, packets, observer);
+        }
+    }
+
+    private void handleMovement(Disguise disguise, LibsPackets<T> packets, IWrappedPlayer observer, IWrappedEntity<?> entity) {
+        if (invalid && RandomUtils.nextDouble() < 0.1) {
+            packets.clear();
+            return;
+        }
+
+        List<MovementTracker> trackers = disguise.getInternals().getTrackers();
+
+        if (!trackers.isEmpty()) {
+            PacketWrapper wrapper = packets.getOriginalPacket();
+
+            if (wrapper instanceof WrapperPlayServerEntityRotation) {
+                trackers.forEach(t -> t.onRotation(observer, (WrapperPlayServerEntityRotation) packets.getOriginalPacket()));
+            } else if (wrapper instanceof WrapperPlayServerEntityHeadLook) {
+                trackers.forEach(t -> t.onLook(observer, (WrapperPlayServerEntityHeadLook) packets.getOriginalPacket()));
+            } else if (wrapper instanceof WrapperPlayServerEntityRelativeMove) {
+                trackers.forEach(t -> t.onRelativeMove(observer, (WrapperPlayServerEntityRelativeMove) packets.getOriginalPacket()));
+            } else if (wrapper instanceof WrapperPlayServerEntityRelativeMoveAndRotation) {
+                trackers.forEach(
+                    t -> t.onRelativeMoveLook(observer, (WrapperPlayServerEntityRelativeMoveAndRotation) packets.getOriginalPacket()));
+            } else if (wrapper instanceof WrapperPlayServerEntityPositionSync) {
+                trackers.forEach(t -> t.onSync(observer, (WrapperPlayServerEntityPositionSync) packets.getOriginalPacket()));
+            } else if (wrapper instanceof WrapperPlayServerEntityTeleport) {
+                trackers.forEach(t -> t.onTeleport(observer, (WrapperPlayServerEntityTeleport) packets.getOriginalPacket()));
+            }
+        }
+
+        PacketWrapper sentPacket = packets.getOriginalPacket();
+
+        double yMod = DisguiseUtilities.getYModifier(disguise) + disguise.getWatcher().getYModifier();
+
+        // If grid locked watcher should be appearing in center of blocks
+        if (disguise.getWatcher() instanceof GridLockedWatcher && ((GridLockedWatcher) disguise.getWatcher()).isGridLocked()) {
+            handleGridLock(disguise, packets, observer, entity, sentPacket, yMod);
+            return;
+        } else if (disguise.getType() == DisguiseType.RABBIT && DisguiseType.getType(entity.getType()) != disguise.getType() &&
+            hasMoved(sentPacket)) {
+            handleRabbitHop(packets, observer, entity);
+        }
+
+        if (sentPacket instanceof WrapperPlayServerEntityRotation && disguise.getType() == DisguiseType.WITHER_SKULL) {
+            // Stop wither skulls from looking
+            packets.clear();
+        } else {
+            handleRemainingMovement(disguise, packets, observer, entity, sentPacket, yMod);
+        }
+    }
+
+    private static boolean hasMoved(PacketWrapper sentPacket) {
+        if (sentPacket instanceof WrapperPlayServerEntityRelativeMove) {
+            WrapperPlayServerEntityRelativeMove packet = (WrapperPlayServerEntityRelativeMove) sentPacket;
+
+            return Math.abs(packet.getDeltaX()) > 0.01 || Math.abs(packet.getDeltaY()) > 0.01 || Math.abs(packet.getDeltaZ()) > 0.01;
+        } else if (sentPacket instanceof WrapperPlayServerEntityRelativeMoveAndRotation) {
+            WrapperPlayServerEntityRelativeMoveAndRotation packet = (WrapperPlayServerEntityRelativeMoveAndRotation) sentPacket;
+
+            return Math.abs(packet.getDeltaX()) > 0.01 || Math.abs(packet.getDeltaY()) > 0.01 || Math.abs(packet.getDeltaZ()) > 0.01;
+        }
+
+        return false;
+    }
+
+    private void handleRemainingMovement(Disguise disguise, LibsPackets<T> packets, IWrappedPlayer observer, IWrappedEntity<?> entity,
+                                         PacketWrapper sentPacket, double yMod) {
+        // If the packet has a head/body pitch/yaw
+        if (!(sentPacket instanceof WrapperPlayServerEntityRelativeMove)) {
+            packets.clear();
+
+            final float yawValue = getYaw(disguise, entity, sentPacket);
+            final float pitchValue = getPitch(disguise, entity, sentPacket);
+
+            PacketWrapper cloned;
+
+            if (sentPacket instanceof WrapperPlayServerEntityTeleport) {
+                WrapperPlayServerEntityTeleport tele = (WrapperPlayServerEntityTeleport) sentPacket;
+
+                cloned =
+                    new WrapperPlayServerEntityTeleport(tele.getEntityId(), tele.getPosition(), yawValue, pitchValue, tele.isOnGround());
+            } else if (sentPacket instanceof WrapperPlayServerEntityRelativeMoveAndRotation) {
+                WrapperPlayServerEntityRelativeMoveAndRotation rot = (WrapperPlayServerEntityRelativeMoveAndRotation) sentPacket;
+
+                cloned =
+                    new WrapperPlayServerEntityRelativeMoveAndRotation(rot.getEntityId(), rot.getDelta(), yawValue, pitchValue,
+                        rot.isOnGround());
+            } else if (sentPacket instanceof WrapperPlayServerEntityRotation) {
+                WrapperPlayServerEntityRotation rot = (WrapperPlayServerEntityRotation) sentPacket;
+
+                cloned = new WrapperPlayServerEntityRotation(rot.getEntityId(), yawValue, pitchValue, rot.isOnGround());
+            } else if (sentPacket instanceof WrapperPlayServerEntityPositionSync) {
+                WrapperPlayServerEntityPositionSync sync = (WrapperPlayServerEntityPositionSync) sentPacket;
+
+                cloned = DisguiseUtilities.cloneSync(sync, sync.getId(), 0, yawValue, pitchValue);
+            } else {
+                throw new IllegalStateException("Unknown packet " + sentPacket.getClass());
+            }
+
+            packets.addPacket(cloned);
+
+            if (entity.getEntity() == observer.getVehicle() && entity.getEntity() instanceof AbstractHorse) {
+                WrapperPlayServerEntityRotation packet =
+                    new WrapperPlayServerEntityRotation(DisguiseAPI.getEntityAttachmentId(), yawValue, pitchValue, false);
+
+                packets.addPacket(packet);
+            } else if (!NmsVersion.v1_21_R5.isSupported() &&
+                (cloned instanceof WrapperPlayServerEntityTeleport || cloned instanceof WrapperPlayServerEntityPositionSync) &&
+                disguise.getType().isArtDisplay()) {
+                Vector3d loc;
+                float rawYaw;
+
+                if (sentPacket instanceof WrapperPlayServerEntityTeleport) {
+                    WrapperPlayServerEntityTeleport tele = (WrapperPlayServerEntityTeleport) sentPacket;
+                    loc = tele.getPosition();
+                    rawYaw = tele.getYaw();
+                } else {
+                    WrapperPlayServerEntityPositionSync sync = (WrapperPlayServerEntityPositionSync) sentPacket;
+                    loc = sync.getValues().getPosition();
+                    rawYaw = sync.getValues().getYaw();
+                }
+
+                int data = (int) (((rawYaw % 360) + 720 + 45) / 90) % 4;
+
+                Vector3d position;
+
+                if (data % 2 == 0) {
+                    position = new Vector3d(loc.getX(), 0, loc.getZ() + data == 0 ? -1 : 1);
+                } else {
+                    position = new Vector3d(loc.getX() + data == 3 ? -1 : 1, loc.getY(), loc.getZ());
+                }
+
+                double y = DisguiseUtilities.getYModifier(disguise);
+
+                if (y != 0) {
+                    position = position.add(0, y, 0);
+                }
+
+                if (cloned instanceof WrapperPlayServerEntityTeleport) {
+                    ((WrapperPlayServerEntityTeleport) cloned).setPosition(position);
+                } else {
+                    ((WrapperPlayServerEntityPositionSync) cloned).getValues().setPosition(position);
+                }
+            } else if (disguise.getType() == DisguiseType.DOLPHIN) {
+                if (cloned instanceof WrapperPlayServerEntityTeleport) {
+                    ((WrapperPlayServerEntityTeleport) cloned).setOnGround(false);
+                } else if (cloned instanceof WrapperPlayServerEntityRelativeMoveAndRotation) {
+                    ((WrapperPlayServerEntityRelativeMoveAndRotation) cloned).setOnGround(false);
+                } else if (cloned instanceof WrapperPlayServerEntityRotation) {
+                    ((WrapperPlayServerEntityRotation) cloned).setOnGround(false);
+                } else if (cloned instanceof WrapperPlayServerEntityPositionSync) {
+                    ((WrapperPlayServerEntityPositionSync) cloned).setOnGround(false);
+                }
+            }
+        } else if (disguise.getType() == DisguiseType.DOLPHIN) {
+            // Dolphins act funny on the ground, so lets not tell the clients they are on the ground
+            packets.clear();
+
+            WrapperPlayServerEntityRelativeMove p = (WrapperPlayServerEntityRelativeMove) sentPacket;
+            WrapperPlayServerEntityRelativeMove cloned =
+                new WrapperPlayServerEntityRelativeMove(p.getEntityId(), p.getDelta(), false);
+
+            packets.addPacket(cloned);
+        }
+
+        if (yMod != 0) {
+            if (sentPacket instanceof WrapperPlayServerEntityTeleport) {
+                PacketWrapper packet = packets.getPackets().get(0);
+                WrapperPlayServerEntityTeleport tele = (WrapperPlayServerEntityTeleport) packet;
+
+                if (packet == sentPacket) {
+                    packet = new WrapperPlayServerEntityTeleport(tele.getEntityId(), tele.getPosition().add(0, yMod, 0), tele.getYaw(),
+                        tele.getPitch(), tele.isOnGround());
+
+                    packets.clear();
+                    packets.addPacket(packet);
+                } else {
+                    tele.setPosition(tele.getPosition().add(0, yMod, 0));
+                }
+            } else if (sentPacket instanceof WrapperPlayServerEntityPositionSync) {
+                WrapperPlayServerEntityPositionSync sync = (WrapperPlayServerEntityPositionSync) packets.getPackets().get(0);
+
+                packets.getPackets().set(0, DisguiseUtilities.cloneSync(sync, sync.getId(), yMod, sync.getYRot(), sync.getXRot()));
+            }
+        }
+    }
+
+    private void handleRabbitHop(LibsPackets<T> packets, IWrappedPlayer observer, IWrappedEntity<?> entity) {
+        // Syncronized so we're not modifying a map across different threads
+        synchronized (this) {
+            Map<UUID, Long> rabbitHops = entity.getRabbitHops();
+
+            // Expire entries
+            Iterator<Map.Entry<UUID, Long>> iterator = rabbitHops.entrySet().iterator();
+
+            while (iterator.hasNext()) {
+                if (iterator.next().getValue() + 500 > System.currentTimeMillis()) {
+                    continue;
+                }
+
+                iterator.remove();
+            }
+
+            long lastHop =
+                rabbitHops.containsKey(observer.getUniqueId()) ? System.currentTimeMillis() - rabbitHops.get(observer.getUniqueId()) :
+                    99999;
+
+            // If last hop was less than 0.1 or more than 0.5 seconds ago
+            if (lastHop < 100 || lastHop > 500) {
+                if (lastHop > 500) {
+                    rabbitHops.put(observer.getUniqueId(), System.currentTimeMillis());
+                }
+
+                packets.addPacket(new WrapperPlayServerEntityStatus(packets.getEntityId(), 1));
+            }
+        }
+    }
+
+    private float getYaw(Disguise disguise, IWrappedEntity<?> entity, PacketWrapper sentPacket) {
+        float yawValue;
+
+        if (sentPacket instanceof WrapperPlayServerEntityRelativeMove) {
+            return 0;
+        } else if (sentPacket instanceof WrapperPlayServerEntityTeleport) {
+            WrapperPlayServerEntityTeleport tele = (WrapperPlayServerEntityTeleport) sentPacket;
+
+            yawValue = tele.getYaw();
+        } else if (sentPacket instanceof WrapperPlayServerEntityRelativeMoveAndRotation) {
+            WrapperPlayServerEntityRelativeMoveAndRotation rot = (WrapperPlayServerEntityRelativeMoveAndRotation) sentPacket;
+
+            yawValue = rot.getYaw();
+        } else if (sentPacket instanceof WrapperPlayServerEntityRotation) {
+            WrapperPlayServerEntityRotation rot = (WrapperPlayServerEntityRotation) sentPacket;
+
+            yawValue = rot.getYaw();
+        } else if (sentPacket instanceof WrapperPlayServerEntityPositionSync) {
+            WrapperPlayServerEntityPositionSync sync = (WrapperPlayServerEntityPositionSync) sentPacket;
+
+            yawValue = sync.getYRot();
+        } else {
+            throw new IllegalStateException("Didn't handle packet " + sentPacket.getClass());
+        }
+
+        Float yawLock = disguise.getWatcher().getYawLock();
+
+        if (yawLock != null) {
+            yawValue = DisguiseUtilities.getYaw(disguise.getType(), yawLock);
+        } else {
+            yawValue = DisguiseUtilities.getYaw(disguise.getType(), entity.getType(), yawValue);
+        }
+
+        return yawValue;
+    }
+
+    private float getPitch(Disguise disguise, IWrappedEntity<?> entity, PacketWrapper sentPacket) {
+        float pitchValue;
+
+        if (sentPacket instanceof WrapperPlayServerEntityRelativeMove) {
+            return 0;
+        } else if (sentPacket instanceof WrapperPlayServerEntityTeleport) {
+            WrapperPlayServerEntityTeleport tele = (WrapperPlayServerEntityTeleport) sentPacket;
+
+            pitchValue = tele.getPitch();
+        } else if (sentPacket instanceof WrapperPlayServerEntityRelativeMoveAndRotation) {
+            WrapperPlayServerEntityRelativeMoveAndRotation rot = (WrapperPlayServerEntityRelativeMoveAndRotation) sentPacket;
+
+            pitchValue = rot.getPitch();
+        } else if (sentPacket instanceof WrapperPlayServerEntityRotation) {
+            WrapperPlayServerEntityRotation rot = (WrapperPlayServerEntityRotation) sentPacket;
+
+            pitchValue = rot.getPitch();
+        } else if (sentPacket instanceof WrapperPlayServerEntityPositionSync) {
+            WrapperPlayServerEntityPositionSync sync = (WrapperPlayServerEntityPositionSync) sentPacket;
+
+            pitchValue = sync.getXRot();
+        } else {
+            throw new IllegalStateException("Didn't handle packet " + sentPacket.getClass());
+        }
+
+        Float pitchLock = disguise.getWatcher().getPitchLock();
+
+        if (pitchLock != null) {
+            pitchValue = DisguiseUtilities.getPitch(disguise.getType(), pitchLock);
+        } else {
+            pitchValue = DisguiseUtilities.getPitch(disguise.getType(), entity.getType(), pitchValue);
+        }
+
+        return pitchValue;
+    }
+
+    private static Vector3d toGrid(GridLockedWatcher watcher, double yMod, Vector3d position) {
+        double y = position.getY();
+
+        return new Vector3d(GridLockedWatcher.center(position.getX(), watcher.getWidthX()),
+            Math.floor(y) + (y % 1 >= 0.85 ? 1 : y % 1 >= 0.35 ? .5 : 0) + yMod,
+            GridLockedWatcher.center(position.getZ(), watcher.getWidthZ()));
+    }
+
+    private static Vector3d getDelta(PacketWrapper packet) {
+        if (packet instanceof WrapperPlayServerEntityRelativeMoveAndRotation) {
+            WrapperPlayServerEntityRelativeMoveAndRotation move = (WrapperPlayServerEntityRelativeMoveAndRotation) packet;
+
+            return new Vector3d(move.getDeltaX(), move.getDeltaY(), move.getDeltaZ());
+        }
+
+        WrapperPlayServerEntityRelativeMove move = (WrapperPlayServerEntityRelativeMove) packet;
+
+        return new Vector3d(move.getDeltaX(), move.getDeltaY(), move.getDeltaZ());
+    }
+
+    private void handleGridLock(Disguise disguise, LibsPackets<T> packets, IWrappedPlayer observer, IWrappedEntity<?> entity,
+                                PacketWrapper sentPacket, double yMod) {
+        packets.clear();
+        final float pitchValue = getPitch(disguise, entity, sentPacket);
+        final float yawValue = getYaw(disguise, entity, sentPacket);
+
+        if (sentPacket instanceof WrapperPlayServerEntityRotation) {
+            WrapperPlayServerEntityRotation rot = (WrapperPlayServerEntityRotation) sentPacket;
+
+            // Reconstruct packet with modified look if needed
+            if (rot.getYaw() != yawValue || rot.getPitch() != pitchValue) {
+                packets.addPacket(new WrapperPlayServerEntityRotation(rot.getEntityId(), yawValue, pitchValue, rot.isOnGround()));
+            }
+
+            return;
+        }
+
+        GridLockedWatcher watcher = (GridLockedWatcher) disguise.getWatcher();
+
+        PacketWrapper movePacket;
+        Vector3d trackedPosition;
+
+        // If not relational movement, the absolute position is already on the packet
+        if (sentPacket instanceof WrapperPlayServerEntityTeleport) {
+            WrapperPlayServerEntityTeleport tele = (WrapperPlayServerEntityTeleport) sentPacket;
+
+            trackedPosition = tele.getPosition();
+
+            movePacket =
+                new WrapperPlayServerEntityTeleport(tele.getEntityId(), toGrid(watcher, yMod, trackedPosition), yawValue, pitchValue,
+                    tele.isOnGround());
+        } else if (sentPacket instanceof WrapperPlayServerEntityPositionSync) {
+            WrapperPlayServerEntityPositionSync sync = (WrapperPlayServerEntityPositionSync) sentPacket;
+
+            trackedPosition = sync.getValues().getPosition();
+
+            EntityPositionData cloned = DisguiseUtilities.clone(sync.getValues());
+            cloned.setPosition(toGrid(watcher, yMod, trackedPosition));
+            cloned.setYaw(yawValue);
+            cloned.setPitch(pitchValue);
+
+            movePacket = new WrapperPlayServerEntityPositionSync(sync.getId(), cloned, sync.isOnGround());
+        } else {
+            Vector3d delta = getDelta(sentPacket);
+
+            Vector3d lastTracked = entity.getTrackedPositions().get(observer.getUniqueId());
+
+            if (lastTracked == null) {
+                Location loc = entity.getLocation();
+
+                lastTracked = new Vector3d(loc.getX() - delta.getX(), loc.getY() - delta.getY(), loc.getZ() - delta.getZ());
+            }
+
+            trackedPosition = lastTracked.add(delta.getX(), delta.getY(), delta.getZ());
+
+            Vector3d from = toGrid(watcher, yMod, lastTracked);
+            Vector3d to = toGrid(watcher, yMod, trackedPosition);
+
+            double x = to.getX() - from.getX();
+            double y = to.getY() - from.getY();
+            double z = to.getZ() - from.getZ();
+
+            if (sentPacket instanceof WrapperPlayServerEntityRelativeMoveAndRotation) {
+                WrapperPlayServerEntityRelativeMoveAndRotation move = (WrapperPlayServerEntityRelativeMoveAndRotation) sentPacket;
+
+                movePacket = new WrapperPlayServerEntityRelativeMoveAndRotation(move.getEntityId(), x, y, z, yawValue, pitchValue,
+                    move.isOnGround());
+            } else if (x != 0 || y != 0 || z != 0) {
+                WrapperPlayServerEntityRelativeMove move = (WrapperPlayServerEntityRelativeMove) sentPacket;
+
+                movePacket = new WrapperPlayServerEntityRelativeMove(move.getEntityId(), x, y, z, move.isOnGround());
+            } else {
+                movePacket = null;
+            }
+        }
+
+        entity.getTrackedPositions().put(observer.getUniqueId(), trackedPosition);
+
+        if (movePacket != null) {
+            packets.addPacket(movePacket);
+        }
+    }
+}

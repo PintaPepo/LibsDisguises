@@ -1,0 +1,59 @@
+[versions]
+com-mojang-authlib-old = "3.5.41"
+com-mojang-authlib-new = "7.0.61"
+commons-lang-commons-lang = "2.6"
+io-netty-netty-buffer = "4.1.90.Final"
+io-netty-netty-codec = "4.1.90.Final"
+it-unimi-dsi-fastutil-version = "8.5.8"
+com-mojang-datafixerupper = "7.0.14"
+
+lombok-version = "1.18.44"
+shadowjar-version = "9.2.2"
+junit-jupiter-version = "5.9.3"
+mockito-version = "5.23.0"
+json-version = "20250517"
+asm-version = "9.8"
+proguard-version = "7.8.0"
+vulcan-version = "1.0.0"
+foliascheduler-version = "0.7.5"
+
+net-kyori-adventure-api = "4.25.0"
+net-kyori-adventure-platform = "4.4.1"
+com-retro-packetevents = "2.14.0-SNAPSHOT"
+placeholder-api = "2.11.6"
+
+org-spigotmc-spigot = "26.3-R0.1-SNAPSHOT"
+io-papermc-paper-api = "1.21.11-R0.1-SNAPSHOT"
+io-papermc-paper-api-test = "26.3.build.+"
+paperweight-version = "2.0.0-beta.21"
+
+
+[libraries]
+com-mojang-datafixerupper = { module = "com.mojang:datafixerupper", version.ref = "com-mojang-datafixerupper" }
+com-mojang-authlib-old = { module = "com.mojang:authlib", version.ref = "com-mojang-authlib-old" }
+com-mojang-authlib-new = { module = "com.mojang:authlib", version.ref = "com-mojang-authlib-new" }
+commons-lang-commons-lang = { module = "commons-lang:commons-lang", version.ref = "commons-lang-commons-lang" }
+io-netty-netty-buffer = { module = "io.netty:netty-buffer", version.ref = "io-netty-netty-buffer" }
+it-unimi-dsi-fastutil = { module = "it.unimi.dsi:fastutil", version.ref = "it-unimi-dsi-fastutil-version" }
+io-netty-netty-codec = { module = "io.netty:netty-codec", version.ref = "io-netty-netty-codec" }
+io-papermc-paper-paper-api = { module = "io.papermc.paper:paper-api", version.ref = "io-papermc-paper-api" }
+net-kyori-adventure-api = { module = "net.kyori:adventure-api", version.ref = "net-kyori-adventure-api" }
+net-kyori-adventure-text-minimessage = { module = "net.kyori:adventure-text-minimessage", version.ref = "net-kyori-adventure-api" }
+net-kyori-adventure-text-serializer-gson = { module = "net.kyori:adventure-text-serializer-gson", version.ref = "net-kyori-adventure-api" }
+net-kyori-adventure-text-serializer-json = { module = "net.kyori:adventure-text-serializer-json", version.ref = "net-kyori-adventure-api" }
+org-spigotmc-spigot = { module = "org.spigotmc:spigot", version.ref = "org-spigotmc-spigot" }
+org-spigotmc-spigot-api = { module = "org.spigotmc:spigot-api", version.ref = "org-spigotmc-spigot" }
+com-retro-packetevents = { module = "com.github.retrooper:packetevents-spigot", version.ref = "com-retro-packetevents" }
+org-projectlombok-lombok = { module = "org.projectlombok:lombok", version.ref = "lombok-version" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter-version" }
+mockito = { module = "org.mockito:mockito-core", version.ref = "mockito-version" }
+placeholder-api = { module = "me.clip:placeholderapi", version.ref = "placeholder-api" }
+org-json = { module = "org.json:json", version.ref = "json-version" }
+org-ow2-asm = { module = "org.ow2.asm:asm", version.ref = "asm-version" }
+com-guardsquare-proguard = { module = "com.guardsquare:proguard-gradle", version.ref = "proguard-version" }
+me-frep-vulcan = { module = "me.frep.vulcan:vulcan-api", version.ref = "vulcan-version" }
+foliascheduler = { module = "com.cjcrafter:foliascheduler", version.ref = "foliascheduler-version" }
+
+[plugins]
+shadowjar = { id = "com.gradleup.shadow", version.ref = "shadowjar-version" }
+paperweight = { id = "io.papermc.paperweight.userdev:io.papermc.paperweight.userdev.gradle.plugin", version.ref = "paperweight-version" }

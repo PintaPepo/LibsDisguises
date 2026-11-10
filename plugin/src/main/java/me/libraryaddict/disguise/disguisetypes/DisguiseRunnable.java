@@ -1,0 +1,473 @@
+package me.libraryaddict.disguise.disguisetypes;
+
+import com.cjcrafter.foliascheduler.TaskImplementation;
+import com.github.retrooper.packetevents.PacketEvents;
+import com.github.retrooper.packetevents.util.Vector3d;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRelativeMove;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityRotation;
+import com.github.retrooper.packetevents.wrapper.play.server.WrapperPlayServerEntityVelocity;
+import lombok.Getter;
+import me.libraryaddict.disguise.DisguiseAPI;
+import me.libraryaddict.disguise.DisguiseConfig;
+import me.libraryaddict.disguise.LibsDisguises;
+import me.libraryaddict.disguise.disguisetypes.watchers.BatWatcher;
+import me.libraryaddict.disguise.disguisetypes.watchers.HangingWatcher;
+import me.libraryaddict.disguise.utilities.DisguiseUtilities;
+import me.libraryaddict.disguise.utilities.DisguiseValues;
+import me.libraryaddict.disguise.utilities.reflection.NmsVersion;
+import me.libraryaddict.disguise.utilities.reflection.ReflectionManager;
+import me.libraryaddict.disguise.utilities.sounds.DisguiseChunkTracker;
+import me.libraryaddict.disguise.utilities.sounds.DisguiseSound;
+import me.libraryaddict.disguise.utilities.sounds.SoundGroup;
+import me.libraryaddict.disguise.utilities.translations.LibsMsg;
+import me.libraryaddict.disguise.utilities.wrapped.IWrappedEntity;
+import me.libraryaddict.disguise.utilities.wrapped.IWrappedPlayer;
+import org.bukkit.Location;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
+import org.bukkit.util.Vector;
+
+import java.util.List;
+
+public class DisguiseRunnable {
+    private TaskImplementation<Void> task;
+    @Getter
+    private boolean inUse;
+    private int blockX, blockY, blockZ, facing;
+    private int deadTicks = 0;
+    @Getter
+    private boolean hasDied;
+    private int actionBarTicks = -1;
+    private int refreshRate;
+    private long lastRefreshed = System.currentTimeMillis();
+    private int ambientSoundTime;
+    private SoundGroup ignoredSoundGroup;
+    private final Disguise disguise;
+    private int lastTicksLived = -1;
+    private long lastValidCheckPassed;
+    private final Double vectorY;
+    private final boolean alwaysSendVelocity, needsToUpdateMovementFrequently;
+    private Vector lastRidingPosition;
+
+    public DisguiseRunnable(Disguise disguise) {
+        this.disguise = disguise;
+
+        switch (disguise.getType()) {
+            case FIREWORK:
+            case WITHER_SKULL:
+            case EXPERIENCE_ORB:
+                vectorY = 0.000001D;
+                alwaysSendVelocity = true;
+                break;
+            default:
+                vectorY = null;
+                alwaysSendVelocity = false;
+                break;
+        }
+
+        // If entity is a projectile, and the disguise is not
+        needsToUpdateMovementFrequently = NmsVersion.v1_21_R4.isSupported() && disguise.getEntity() instanceof Projectile &&
+            !Projectile.class.isAssignableFrom(disguise.getType().getEntityClass());
+
+        // Where refresh rate is in ticks, exp is in here due to a fire exploit + stop it glitching out so much
+        switch (disguise.getType()) {
+            case FIREWORK:
+            case EXPERIENCE_ORB:
+                refreshRate = 40; // 2 seconds
+                break;
+            case EVOKER_FANGS:
+                refreshRate = 23;
+                break;
+            default:
+                break;
+        }
+
+        refreshRate *= 50;
+        resetAmbientSoundTime();
+    }
+
+    /**
+     * Called when the disguise may be removed shortly
+     */
+    public void setPossibleRemoval() {
+        // Reset the flags, it'll be processed immediately
+        lastValidCheckPassed = 0L;
+        lastTicksLived = 0;
+    }
+
+    /**
+     * Players are always ticked when dead, so we use the event
+     */
+    public void markDead() {
+        hasDied = true;
+    }
+
+    public void markAlive() {
+        hasDied = false;
+        deadTicks = 0;
+    }
+
+    public void resetAmbientSoundTime() {
+        DisguiseValues values = disguise.getType().getEntityInfo();
+
+        if (values == null) {
+            return;
+        }
+
+        this.ambientSoundTime = -values.getAmbientSoundInterval();
+    }
+
+    private void playIdleSound() {
+        if (!disguise.isPlayIdleSounds() || !disguise.isReplaceSounds()) {
+            return;
+        }
+
+        if (DisguiseUtilities.getRandom().nextInt(1000) >= this.ambientSoundTime++) {
+            return;
+        }
+
+        resetAmbientSoundTime();
+
+        SoundGroup group = SoundGroup.getGroup(disguise);
+
+        // If group was redeemed ignored
+        if (group == ignoredSoundGroup) {
+            return;
+        }
+
+        DisguiseSound idleSound;
+
+        // If no group, or the group has no sound
+        if (group == null || (idleSound = group.getSound(SoundGroup.SoundType.IDLE)) == null) {
+            ignoredSoundGroup = group;
+            return;
+        }
+
+        float volume = idleSound.hasVolume() ? idleSound.getVolume() : group.getDamageAndIdleSoundVolume();
+        float volumeSquared = volume * (16 * 16);
+        float pitch = 1f;
+
+        if (idleSound.hasPitch()) {
+            pitch = idleSound.getPitch();
+        } else if (disguise instanceof MobDisguise && ((MobDisguise) disguise).doesDisguiseAge()) {
+            if (((MobDisguise) disguise).isAdult()) {
+                pitch = ((DisguiseUtilities.random.nextFloat() - DisguiseUtilities.random.nextFloat()) * 0.2F) + 1.0F;
+            } else {
+                pitch = ((DisguiseUtilities.random.nextFloat() - DisguiseUtilities.random.nextFloat()) * 0.2F) + 1.4F;
+            }
+        }
+
+        Vector disgLoc = disguise.getEntity().getLocation().toVector();
+        List<IWrappedPlayer> toPlay = DisguiseUtilities.getTrackingPlayers(disguise);
+
+        if (disguise.getEntity() instanceof Player && disguise.isSelfDisguiseVisible() && disguise.isHearSelfDisguise()) {
+            toPlay.add((IWrappedPlayer) disguise.getWrappedEntity());
+        }
+
+        for (IWrappedPlayer player : toPlay) {
+            double dist = player.getLocation().toVector().distance(disgLoc);
+
+            if (dist > volumeSquared) {
+                continue;
+            }
+
+            player.playSound(disguise.getEntity().getLocation(), NmsVersion.v1_16.isSupported() ? idleSound.toString() : idleSound.getKey(),
+                disguise.getEffectiveSoundCategory().getBukkitSoundCategory(disguise), volume, pitch);
+        }
+    }
+
+    private boolean isDead() {
+        // If entity is no longer valid. Remove it.
+        if (disguise.getEntity() instanceof Player && !((Player) disguise.getEntity()).isOnline()) {
+            disguise.removeDisguise();
+
+            return true;
+        } else if (disguise.disguiseExpires > 0 && (DisguiseConfig.isDynamicExpiry() ? disguise.disguiseExpires-- == 1 :
+            disguise.disguiseExpires < System.currentTimeMillis())) { // If disguise expired
+            disguise.removeDisguise();
+
+            if (disguise.getEntity() instanceof Player) {
+                LibsMsg.EXPIRED_DISGUISE.send(disguise.getEntity());
+            }
+
+            return true;
+        } else if (hasDied || isEntityInvalid()) {
+            // If it has been dead for 30+ ticks
+            // This is to ensure that this disguise isn't removed while clients think its the real entity
+            // The delay is because if it sends the destroy entity packets straight away, then it means no
+            // death animation
+            // This is probably still a problem for wither and enderdragon deaths.
+            if (deadTicks++ > (disguise.getType() == DisguiseType.ENDER_DRAGON ? 200 : 20)) {
+                if (disguise.isRemoveDisguiseOnDeath()) {
+                    disguise.removeDisguise();
+                }
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Helper method to try avoid some lag
+     * Checks ticks lived and if that has changed, then it's being ticked.
+     * However the server may not tick the entity for reasons, such as far away from a player. In which case it won't increment
+     * So we will test for 'isValid' in that scenario every second.
+     */
+    private boolean isEntityInvalid() {
+        // Technically there is 'isTicking' which was added to paper in 1.16(.5?) but that isn't the same thing
+        int ticksLived = disguise.getEntity().getTicksLived();
+
+        // They were ticked just before, they're either dead this very tick, or valid
+        if (lastTicksLived != ticksLived) {
+            lastTicksLived = ticksLived;
+            return false;
+        }
+
+        // If it passed a check in the last second
+        if (lastValidCheckPassed + 1000 > System.currentTimeMillis()) {
+            return false;
+        }
+
+        // If entity isn't valid, then return true, it's invalid
+        if (!disguise.getEntity().isValid()) {
+            return true;
+        }
+
+        // Otherwise set the 'has passed check' and return false
+        lastValidCheckPassed = System.currentTimeMillis();
+        return false;
+    }
+
+    public void run() {
+        Location loc;
+
+        if (!disguise.isDisguiseInUse() || disguise.getEntity() == null ||
+            !(loc = disguise.getEntity().getLocation()).getWorld().isChunkLoaded(loc.getBlockX() >> 4, loc.getBlockZ() >> 4)) {
+            disguise.stopDisguise();
+
+            // If still somehow not cancelled
+            if (isInUse()) {
+                stop();
+            }
+            return;
+        }
+
+        // WrappedEntities that don't store location are otherwise never updated, so we're updating the locations here
+        DisguiseChunkTracker.updateTrackedChunk(disguise.getWrappedEntity());
+
+        if (++actionBarTicks % 15 == 0) {
+            actionBarTicks = 0;
+
+            disguise.doPeriodicTick();
+        }
+
+        // As of 1.21.7, hanging entities have rotation decided by metadata
+        if (NmsVersion.v1_21_R5.isSupported() && disguise.getWatcher() instanceof HangingWatcher) {
+            ((HangingWatcher) disguise.getWatcher()).updateHangingRotation();
+        }
+
+        if (isDead()) {
+            return;
+        }
+
+        deadTicks = 0;
+
+        playIdleSound();
+
+        // If the disguise type is invisible, we need to resend the entity packet else it will turn invisible
+        if (refreshRate > 0 && lastRefreshed + refreshRate < System.currentTimeMillis()) {
+            lastRefreshed = System.currentTimeMillis();
+
+            DisguiseUtilities.refreshTrackers((TargetedDisguise) disguise);
+        }
+
+        if (disguise.isServerBoundingBoxEnabled()) {
+            DisguiseUtilities.doBoundingBox((TargetedDisguise) disguise);
+        }
+
+        // If the self disguise is visible when we're a passenger
+        if (DisguiseConfig.isSelfDisguiseVisibleWhenRiding()) {
+            // Send the movement
+            updateRidingSelfDisguise(loc);
+        }
+
+        if (disguise.getType() == DisguiseType.BAT && !((BatWatcher) disguise.getWatcher()).isHanging()) {
+            return;
+        }
+
+        doVelocity();
+
+        if (disguise.getType() == DisguiseType.EXPERIENCE_ORB) {
+            doExpMovements();
+        } else if (DisguiseConfig.isTickProjectilesFaster() && needsToUpdateMovementFrequently &&
+            disguise.getEntity().getVelocity().lengthSquared() > 0) {
+            ReflectionManager.getNmsReflection().setImpulse(disguise.getEntity());
+        }
+    }
+
+    private void updateRidingSelfDisguise(Location loc) {
+        Entity entity = disguise.getEntity();
+
+        // If not riding something, or not self disguised
+        if (!entity.isInsideVehicle() || !DisguiseUtilities.getSelfDisguised().contains(entity.getUniqueId()) ||
+            // If the owning disguise is not this disguise
+            DisguiseAPI.getDisguise((Player) entity, entity) != disguise) {
+            lastRidingPosition = null;
+            return;
+        }
+
+        // Paper snaps the player onto the vehicle's position when the client steers it
+        Vector position = ReflectionManager.getNmsReflection().getRidingPosition(entity);
+
+        // Only update the movement if the location changed
+        if (position.equals(lastRidingPosition)) {
+            return;
+        }
+
+        lastRidingPosition = position;
+        // The server sends no movement for passengers
+        DisguiseUtilities.sendSelfDisguisePosition((Player) entity, position.toLocation(loc.getWorld(), loc.getYaw(), loc.getPitch()));
+    }
+
+    private void doExpMovements() {
+        for (IWrappedPlayer player : DisguiseUtilities.getTrackingPlayers(disguise)) {
+            WrapperPlayServerEntityRelativeMove packet;
+            IWrappedEntity entity = disguise.getWrappedEntity();
+
+            if (entity != player) {
+                packet = new WrapperPlayServerEntityRelativeMove(entity.getEntityId(), 0, 0, 0, true);
+            } else if (disguise.isSelfDisguiseVisible() && disguise.getEntity() instanceof Player) {
+                packet = new WrapperPlayServerEntityRelativeMove(DisguiseAPI.getSelfDisguiseId(), 0, 0, 0, true);
+            } else {
+                continue;
+            }
+
+            player.sendPacketSilently(packet);
+        }
+    }
+
+    private void doVelocity() {
+        // If the vectorY isn't 0. Cos if it is. Then it doesn't want to send any vectors.
+        if (vectorY == null || !disguise.isVelocitySent()) {
+            return;
+        }
+
+        Entity entity = disguise.getEntity();
+        boolean onGround = entity.isOnGround();
+
+        // If this disguise has velocity sending enabled and the entity is flying.
+        if (!alwaysSendVelocity && onGround) {
+            return;
+        }
+
+        Vector vector = entity.getVelocity();
+
+        // If the entity doesn't have velocity changes already - You know. I really can't wrap my
+        // head about the
+        // if statement.
+        // But it doesn't seem to do anything wrong..
+        if (vector.getY() != 0 && !(vector.getY() < 0 && alwaysSendVelocity && onGround)) {
+            return;
+        }
+
+        // If disguise isn't a experience orb, or the entity isn't standing on the ground
+        if (disguise.getType() == DisguiseType.EXPERIENCE_ORB && onGround) {
+            return;
+        }
+
+        WrapperPlayServerEntityRotation lookPacket = null;
+
+        if (disguise.getType() == DisguiseType.WITHER_SKULL && DisguiseConfig.isWitherSkullPacketsEnabled()) {
+            Location loc = entity.getLocation();
+            EntityType type = entity.getType();
+            float yaw = DisguiseUtilities.getYaw(disguise.getType(), type, loc.getYaw());
+            float pitch = DisguiseUtilities.getPitch(disguise.getType(), type, loc.getPitch());
+            lookPacket = new WrapperPlayServerEntityRotation(entity.getEntityId(), yaw, pitch, onGround);
+
+            if (disguise.isSelfDisguiseVisible() && type == EntityType.PLAYER) {
+                WrapperPlayServerEntityRotation selfPacket =
+                    new WrapperPlayServerEntityRotation(DisguiseAPI.getSelfDisguiseId(), yaw, pitch, onGround);
+
+                PacketEvents.getAPI().getPlayerManager().sendPacketSilently(entity, selfPacket);
+            }
+        }
+
+        try {
+
+            for (IWrappedPlayer player : DisguiseUtilities.getTrackingPlayers(disguise)) {
+                int entityId = entity.getEntityId();
+
+                // If the viewing player is the disguised player
+                if (entity == player.getEntity()) {
+                    // If not using self disguise, continue
+                    if (!disguise.isSelfDisguiseVisible()) {
+                        continue;
+                    }
+
+                    // Write self disguise ID
+                    entityId = DisguiseAPI.getSelfDisguiseId();
+                } else if (lookPacket != null) {
+                    player.sendPacketSilently(
+                        new WrapperPlayServerEntityRotation(lookPacket.getEntityId(), lookPacket.getYaw(), lookPacket.getPitch(),
+                            lookPacket.isOnGround()));
+                }
+
+                // The number isn't me trying to be funny
+                WrapperPlayServerEntityVelocity velocity = new WrapperPlayServerEntityVelocity(entityId,
+                    new Vector3d(vector.getX(), (vectorY * ReflectionManager.getPing(player.getEntity())) * 0.069D, vector.getZ()));
+
+                player.sendPacketSilently(velocity);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    public void start() {
+        if (isInUse()) {
+            throw new IllegalStateException("Runnable already in use");
+        }
+
+        inUse = true;
+
+        if (disguise.getEntity() == null) {
+            return;
+        }
+
+        task = LibsDisguises.getScheduler().entity(disguise.getEntity()).runAtFixedRate(this::run, this::onRetired, 1, 1);
+    }
+
+    /**
+     * The entity scheduler is retired when the entity is removed, which drops this task before it can notice the entity is gone.
+     * Without this the disguise is never removed, leaking it along with any scoreboard teams it registered.
+     */
+    private void onRetired() {
+        task = null;
+
+        if (isInUse() && disguise.isDisguiseInUse()) {
+            disguise.removeDisguise();
+        }
+    }
+
+    public void stop() {
+        if (!isInUse()) {
+            throw new IllegalStateException("Runnable not in use");
+        }
+
+        inUse = false;
+
+        if (task != null) {
+            task.cancel();
+            task = null;
+        }
+    }
+
+    public static void startRunnable() {
+    }
+}
+
+

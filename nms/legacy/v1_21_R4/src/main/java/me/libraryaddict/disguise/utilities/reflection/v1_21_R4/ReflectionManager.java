@@ -1,0 +1,211 @@
+package me.libraryaddict.disguise.utilities.reflection.v1_21_R4;
+
+import com.github.retrooper.packetevents.protocol.entity.wolfvariant.WolfSoundVariants;
+import com.github.retrooper.packetevents.protocol.mapper.MappedEntity;
+import com.github.retrooper.packetevents.util.mappings.VersionedRegistry;
+import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.ProfileLookupCallback;
+import com.mojang.authlib.minecraft.MinecraftSessionService;
+import com.mojang.serialization.DynamicOps;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.PooledByteBufAllocator;
+import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
+import lombok.SneakyThrows;
+import net.minecraft.core.Holder;
+import net.minecraft.core.Registry;
+import net.minecraft.core.RegistrySynchronization;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.Tag;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.protocol.configuration.ClientboundRegistryDataPacket;
+import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.RegistryLayer;
+import net.minecraft.server.level.ChunkMap;
+import net.minecraft.server.level.ClientInformation;
+import net.minecraft.server.level.ParticleStatus;
+import net.minecraft.server.level.ServerChunkCache;
+import net.minecraft.server.level.ServerEntity;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.EntityDimensions;
+import net.minecraft.world.entity.EntitySpawnReason;
+import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.animal.wolf.WolfSoundVariant;
+import net.minecraft.world.entity.player.ChatVisiblity;
+import net.minecraft.world.flag.FeatureFlagSet;
+import net.minecraft.world.scores.Objective;
+import net.minecraft.world.scores.ScoreHolder;
+import org.bukkit.Art;
+import org.bukkit.Bukkit;
+import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.craftbukkit.CraftArt;
+import org.bukkit.craftbukkit.CraftRegistry;
+import org.bukkit.craftbukkit.CraftWorld;
+import org.bukkit.craftbukkit.entity.CraftCat;
+import org.bukkit.craftbukkit.entity.CraftChicken;
+import org.bukkit.craftbukkit.entity.CraftCow;
+import org.bukkit.craftbukkit.entity.CraftEntity;
+import org.bukkit.craftbukkit.entity.CraftFrog;
+import org.bukkit.craftbukkit.entity.CraftPig;
+import org.bukkit.craftbukkit.entity.CraftWolf;
+import org.bukkit.craftbukkit.inventory.SerializableMeta;
+import org.bukkit.craftbukkit.scoreboard.CraftScoreboard;
+import org.bukkit.craftbukkit.util.CraftMagicNumbers;
+import org.bukkit.craftbukkit.util.CraftNamespacedKey;
+import org.bukkit.entity.Cat;
+import org.bukkit.entity.Chicken;
+import org.bukkit.entity.Cow;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Frog;
+import org.bukkit.entity.Pig;
+import org.bukkit.entity.Wolf;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.scoreboard.Scoreboard;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+
+public class ReflectionManager extends ReflectionManagerLayered {
+    private Method wolfSoundVariantMethods;
+
+    @SneakyThrows
+    public ReflectionManager() {
+        super();
+
+        for (Field f : SynchedEntityData.class.getDeclaredFields()) {
+            if (!f.getType().isArray()) {
+                continue;
+            }
+
+            f.setAccessible(true);
+            dataItemsField = f;
+        }
+
+        Field entityCounter = net.minecraft.world.entity.Entity.class.getDeclaredField("c");
+        entityCounter.setAccessible(true);
+        this.entityCounter = (AtomicInteger) entityCounter.get(null);
+
+        // Default is protected method, 1.0F on EntityLiving.class
+        entityDefaultSoundMethod = net.minecraft.world.entity.LivingEntity.class.getDeclaredMethod("fe");
+        entityDefaultSoundMethod.setAccessible(true);
+
+        // Paper did a hard fork, not all features available in paper are available in spigot
+        // As of time of writing, 8/4/2025, only paper has a way to get the wolf sound variant
+        try {
+            // Try to get the class
+            Class.forName("org.bukkit.entity.Wolf$SoundVariant");
+            // Class exists! This is a paper server, or spigot has updated
+            wolfSoundVariantMethods = null;
+        } catch (Throwable throwable) {
+            wolfSoundVariantMethods = net.minecraft.world.entity.animal.wolf.Wolf.class.getDeclaredMethod("gM");
+            wolfSoundVariantMethods.setAccessible(true);
+            // Failed to load, fall back to nms
+        }
+    }
+
+    @Override
+    public net.minecraft.world.entity.Entity createEntityInstance(String entityName) {
+        Optional<net.minecraft.world.entity.EntityType<?>> optional =
+            net.minecraft.world.entity.EntityType.byString(entityName.toLowerCase(Locale.ENGLISH));
+
+        if (optional.isEmpty()) {
+            return null;
+        }
+
+        net.minecraft.world.entity.EntityType<?> entityType = optional.orElse(null);
+        ServerLevel world = getWorldServer(Bukkit.getWorlds().getFirst());
+        net.minecraft.world.entity.Entity entity;
+        if (entityType == net.minecraft.world.entity.EntityType.PLAYER) {
+            GameProfile gameProfile = new GameProfile(new UUID(0, 0), "Steve");
+            ClientInformation information =
+                new ClientInformation("english", 10, ChatVisiblity.FULL, true, 0, HumanoidArm.RIGHT, true, true, ParticleStatus.ALL);
+            entity = new ServerPlayer(getMinecraftServer(), world, gameProfile, information);
+        } else {
+            entity = entityType.create(world, EntitySpawnReason.LOAD);
+        }
+
+        return entity;
+    }
+
+    @Override
+    public <T> int getIntFromType(T type) {
+        if (type instanceof Art) {
+            return CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.PAINTING_VARIANT)
+                .getIdOrThrow(CraftArt.bukkitToMinecraft((Art) type));
+        } else if (type instanceof Frog.Variant) {
+            return CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.FROG_VARIANT)
+                .getIdOrThrow(CraftFrog.CraftVariant.bukkitToMinecraft((Frog.Variant) type));
+        } else if (type instanceof Cat.Type) {
+            return CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.CAT_VARIANT)
+                .getIdOrThrow(CraftCat.CraftType.bukkitToMinecraft((Cat.Type) type));
+        } else if (type instanceof Wolf.Variant) {
+            return CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.WOLF_VARIANT)
+                .getIdOrThrow(CraftWolf.CraftVariant.bukkitToMinecraft((Wolf.Variant) type));
+        } else if (type instanceof Cow.Variant) {
+            return CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.COW_VARIANT)
+                .getIdOrThrow(CraftCow.CraftVariant.bukkitToMinecraft((Cow.Variant) type));
+        } else if (type instanceof Chicken.Variant) {
+            return CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.CHICKEN_VARIANT)
+                .getIdOrThrow(CraftChicken.CraftVariant.bukkitToMinecraft((Chicken.Variant) type));
+        } else if (type instanceof Pig.Variant) {
+            return CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.PIG_VARIANT)
+                .getIdOrThrow(CraftPig.CraftVariant.bukkitToMinecraft((Pig.Variant) type));
+        }
+
+        return super.getIntFromType(type);
+    }
+
+    @Override
+    public <T> T getTypeFromInt(Class<T> typeClass, int typeId) {
+        if (typeClass == Art.class) {
+            return (T) CraftArt.minecraftHolderToBukkit(
+                CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.PAINTING_VARIANT).get(typeId).orElse(null));
+        } else if (typeClass == Frog.Variant.class) {
+            return (T) CraftFrog.CraftVariant.minecraftHolderToBukkit(
+                CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.FROG_VARIANT).get(typeId).orElse(null));
+        } else if (typeClass == Cat.Type.class) {
+            return (T) CraftCat.CraftType.minecraftHolderToBukkit(
+                CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.CAT_VARIANT).get(typeId).orElse(null));
+        } else if (typeClass == Wolf.Variant.class) {
+            return (T) CraftWolf.CraftVariant.minecraftHolderToBukkit(
+                CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.WOLF_VARIANT).get(typeId).orElse(null));
+        } else if (typeClass == Cow.Variant.class) {
+            return (T) CraftCow.CraftVariant.minecraftHolderToBukkit(
+                CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.COW_VARIANT).get(typeId).orElse(null));
+        } else if (typeClass == Chicken.Variant.class) {
+            return (T) CraftChicken.CraftVariant.minecraftHolderToBukkit(
+                CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.CHICKEN_VARIANT).get(typeId).orElse(null));
+        } else if (typeClass == Pig.Variant.class) {
+            return (T) CraftPig.CraftVariant.minecraftHolderToBukkit(
+                CraftRegistry.getMinecraftRegistry().lookupOrThrow(Registries.PIG_VARIANT).get(typeId).orElse(null));
+        }
+
+        return super.getTypeFromInt(typeClass, typeId);
+    }
+
+    @SneakyThrows
+    @Override
+    public String getVariant(Entity entity, VersionedRegistry<? extends MappedEntity> registry) {
+        if (registry == WolfSoundVariants.getRegistry() && entity instanceof Wolf) {
+            // The "minecraft:" is pretty crude, though I strugg
+            return ((Holder<WolfSoundVariant>) wolfSoundVariantMethods.invoke(((CraftWolf) entity).getHandle())).unwrapKey()
+                .map(k -> k.location().getPath()).orElse(null);
+        }
+
+        return super.getVariant(entity, registry);
+    }
+}
